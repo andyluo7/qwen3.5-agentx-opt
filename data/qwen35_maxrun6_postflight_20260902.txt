@@ -1,0 +1,23 @@
+2026-09-02T18:33:12-05:00
+PORTS
+WORKLOAD_PROCESSES
+KFD_USERS
+GPU_BUSY_VRAM
+card1 busy=0
+card1 vram=297754624
+card17 busy=0
+card17 vram=297754624
+card25 busy=0
+card25 vram=297754624
+card33 busy=0
+card33 vram=297754624
+card41 busy=0
+card41 vram=297754624
+card49 busy=0
+card49 vram=297754624
+card57 busy=0
+card57 vram=297754624
+card9 busy=0
+card9 vram=297754624
+RECENT_GPU_FAULTS
+CLEAN

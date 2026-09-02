@@ -1,0 +1,253 @@
+From 1d9f48c2307a3d37022b21d54f3e66932595f8a4 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Tue, 1 Sep 2026 15:19:12 -0700
+Subject: [PATCH] Combine SGLang PR 35872 and PR 37465 for Qwen3.5 AgentX
+ screening
+
+---
+ .../ops/attention/unified_attention_3d_mtp.py | 64 ++++++++++++++++++-
+ .../sglang/kernels/ops/speculative/topk1.py   | 39 ++++++-----
+ .../srt/layers/attention/aiter_backend.py     | 12 +++-
+ .../sglang/srt/speculative/eagle_worker_v2.py | 19 +++++-
+ 4 files changed, 113 insertions(+), 21 deletions(-)
+
+diff --git a/python/sglang/kernels/ops/attention/unified_attention_3d_mtp.py b/python/sglang/kernels/ops/attention/unified_attention_3d_mtp.py
+index 720a2d2099..344424fa82 100644
+--- a/python/sglang/kernels/ops/attention/unified_attention_3d_mtp.py
++++ b/python/sglang/kernels/ops/attention/unified_attention_3d_mtp.py
+@@ -42,6 +42,55 @@ import triton.language as tl
+ from aiter.ops.triton.utils._triton.kernel_repr import make_kernel_repr
+ from aiter.ops.triton.utils.types import e4m3_dtype
+ 
++try:  # gfx950 assembly MTP-verify attention (aiter >= the version that ships it)
++    from aiter import mtp_verify_attn_fwd_asm as _aiter_mtp_verify_attn_fwd_asm
++except ImportError:
++    _aiter_mtp_verify_attn_fwd_asm = None
++
++import os as _os
++
++from sglang.srt.utils import is_gfx95_supported
++
++
++def asm_verify_attn_enabled() -> bool:
++    """aiter's gfx950 assembly verify-attention kernel (mtp_verify_attn_fwd_asm)
++    is used by default when aiter provides it and the batch shape is supported;
++    SGLANG_ASM_VERIFY_ATTN=0 turns it off."""
++    return (
++        _os.environ.get("SGLANG_ASM_VERIFY_ATTN", "1") == "1"
++        and _aiter_mtp_verify_attn_fwd_asm is not None
++        and is_gfx95_supported()
++    )
++
++
++def asm_verify_attn_supported(
++    q, k, v, seqused_k, cu_seqlens_q, block_table, num_queries_per_kv, max_seqlen_q,
++    k_descale, v_descale,
++) -> bool:
++    num_tokens, _, head_size = q.shape
++    num_seqs = seqused_k.shape[0]
++    hkv = k.shape[2]
++    return (
++        head_size == 256
++        and k.shape[1] == 16
++        and num_queries_per_kv in (16, 8)
++        # The asm kernel assumes a uniform q_len of exactly 4 (verify = 3 draft + 1);
++        # sglang verify batches are uniform, so the token-count check suffices.
++        and max_seqlen_q == 4
++        and num_tokens == num_seqs * 4
++        and q.stride(1) == head_size
++        and q.stride(2) == 1
++        and k.is_contiguous()
++        and v.is_contiguous()
++        and seqused_k.dtype == torch.int64
++        and cu_seqlens_q.dtype == torch.int32
++        and block_table.dtype == torch.int32
++        and k_descale is not None
++        and v_descale is not None
++        and k_descale.dtype == torch.float32
++        and v_descale.dtype == torch.float32
++    )
++
+ float8_info = torch.finfo(e4m3_dtype)
+ 
+ 
+@@ -626,11 +675,24 @@ def unified_attention_3d_mtp_func(
+     # which packs two draft tokens per tile. Any (16N : N) GQA layout works because
+     # the kernel indexes KV through kv_head_idx = program_id(1).
+     assert num_query_heads % num_kv_heads == 0
+-    assert num_queries_per_kv == 16
+     assert head_size == 256 and k.shape[1] == 16
+     assert q.dtype == torch.bfloat16
+     assert k.dtype == e4m3_dtype and v.dtype == e4m3_dtype
+ 
++    if asm_verify_attn_enabled() and asm_verify_attn_supported(
++        q, k, v, seqused_k, cu_seqlens_q, block_table,
++        num_queries_per_kv, max_seqlen_q, k_descale, v_descale,
++    ):
++        # aiter's gfx950 assembly kernel: reads the page-16 fp8 cache in place,
++        # supports GQA ratios 16 and 8, does its own split-KV reduce into `out`.
++        return _aiter_mtp_verify_attn_fwd_asm(
++            q, k, v, block_table, seqused_k, cu_seqlens_q,
++            k_descale, v_descale, softmax_scale, out=out,
++        )
++
++    # The Triton kernel below is only correct for the 16:1 GQA layout.
++    assert num_queries_per_kv == 16
++
+     block_m = 32
+     block_q = block_m // num_queries_per_kv
+     tile_size = 32
+diff --git a/python/sglang/kernels/ops/speculative/topk1.py b/python/sglang/kernels/ops/speculative/topk1.py
+index 93f658f2a1..ef1620a9a1 100644
+--- a/python/sglang/kernels/ops/speculative/topk1.py
++++ b/python/sglang/kernels/ops/speculative/topk1.py
+@@ -49,6 +49,7 @@ def _draft_topk1_finalize_kernel(
+     draft_token_column,
+     num_splits: tl.constexpr,
+     WRITE_DRAFT_TOKEN: tl.constexpr,
++    ADVANCE_POSITIONS: tl.constexpr,
+     BLOCK: tl.constexpr,
+ ):
+     row = tl.program_id(0)
+@@ -67,33 +68,35 @@ def _draft_topk1_finalize_kernel(
+     if WRITE_DRAFT_TOKEN:
+         tl.store(draft_tokens + row * draft_tokens_stride + draft_token_column, index)
+ 
+-    position = tl.load(positions + row)
+-    tl.store(positions + row, position + 1)
++    # Draft-forward advances positions; draft-extend only selects the next token.
++    # This constexpr removes the load/store entirely from the latter kernel.
++    if ADVANCE_POSITIONS:
++        position = tl.load(positions + row)
++        tl.store(positions + row, position + 1)
+ 
+ 
+ def draft_topk1_postprocess(
+     next_token_logits: torch.Tensor,
+-    positions: torch.Tensor,
++    positions: torch.Tensor | None,
+     draft_tokens: torch.Tensor | None = None,
+     draft_token_column: int = 0,
+ ):
+-    """Argmax draft logits for topk=1 and advance positions.
++    """Select top-k=1 and optionally update positions and the draft chain.
+ 
+-    PyTorch eager argmax reduces each row with too little parallelism for the
+-    GLM/DSV4 vocab widths in CUDA graph replay. This split reduction exposes
+-    the vocab dimension across CTAs, then finalizes one token per row.
+-
+-    If ``draft_tokens`` is given, the finalize kernel also stores the argmax
+-    into ``draft_tokens[:, draft_token_column]``, mutating the caller-owned
+-    buffer in place. ``topk_p`` is returned as constant 1.0: topk=1 drafting
+-    is greedy and the chain probabilities are unused downstream.
++    The split reduction masks vocabulary-tail lanes and treats NaNs as
++    ``-1e30``, so every returned index is within the real vocabulary.
++    ``positions`` is required by draft-forward and advanced in the finalize
++    kernel. Draft-extend passes ``None`` because its position bookkeeping is
++    already complete and only argmax output is needed.
+     """
+     assert next_token_logits.ndim == 2
+     assert next_token_logits.stride(1) == 1
+-    assert positions.ndim == 1
+-    assert positions.is_contiguous()
+-    assert positions.shape[0] == next_token_logits.shape[0]
+-    assert positions.device == next_token_logits.device
++    advance_positions = positions is not None
++    if advance_positions:
++        assert positions.ndim == 1
++        assert positions.is_contiguous()
++        assert positions.shape[0] == next_token_logits.shape[0]
++        assert positions.device == next_token_logits.device
+     write_draft_token = draft_tokens is not None
+     if write_draft_token:
+         assert draft_tokens.ndim == 2
+@@ -104,6 +107,7 @@ def draft_topk1_postprocess(
+         assert 0 <= draft_token_column < draft_tokens.shape[1]
+ 
+     bs, vocab_size = next_token_logits.shape
++    assert vocab_size > 0
+     topk_p = torch.empty((bs, 1), dtype=torch.float32, device=next_token_logits.device)
+     topk_index = torch.empty(
+         (bs, 1), dtype=torch.int64, device=next_token_logits.device
+@@ -138,12 +142,13 @@ def draft_topk1_postprocess(
+         partial_indices,
+         topk_p,
+         topk_index,
+-        positions,
++        positions if advance_positions else topk_index,
+         draft_tokens if write_draft_token else topk_index,
+         draft_tokens.stride(0) if write_draft_token else 0,
+         draft_token_column,
+         num_splits,
+         WRITE_DRAFT_TOKEN=write_draft_token,
++        ADVANCE_POSITIONS=advance_positions,
+         BLOCK=triton.next_power_of_2(num_splits),
+         num_warps=1,
+     )
+diff --git a/python/sglang/srt/layers/attention/aiter_backend.py b/python/sglang/srt/layers/attention/aiter_backend.py
+index 0e73867d2f..4757718bab 100755
+--- a/python/sglang/srt/layers/attention/aiter_backend.py
++++ b/python/sglang/srt/layers/attention/aiter_backend.py
+@@ -62,6 +62,7 @@ try:
+     from aiter.ops.triton.attention.unified_attention import unified_attention
+ 
+     from sglang.kernels.ops.attention.unified_attention_3d_mtp import (
++        asm_verify_attn_enabled,
+         unified_attention_3d_mtp_func,
+     )
+ except ImportError:
+@@ -2456,7 +2457,16 @@ class AiterAttnBackend(AttentionBackend):
+                         is_gfx95_supported()
+                         and 1 < self.forward_metadata.max_q_len <= 4
+                         and max_kv_len > 512
+-                        and num_queries_per_kv == 16
++                        and (
++                            num_queries_per_kv == 16
++                            or (
++                                num_queries_per_kv == 8
++                                # the asm kernel needs the full 4-token verify
++                                # block; shorter draft configs keep the old path
++                                and self.forward_metadata.max_q_len == 4
++                                and asm_verify_attn_enabled()
++                            )
++                        )
+                         and layer.tp_k_head_num == layer.tp_v_head_num
+                         and layer.qk_head_dim == 256
+                         and layer.v_head_dim == 256
+diff --git a/python/sglang/srt/speculative/eagle_worker_v2.py b/python/sglang/srt/speculative/eagle_worker_v2.py
+index afdd57ac7b..1661eed4ac 100644
+--- a/python/sglang/srt/speculative/eagle_worker_v2.py
++++ b/python/sglang/srt/speculative/eagle_worker_v2.py
+@@ -684,8 +684,13 @@ class EagleDraftWorker(EagleDraftWorkerBase):
+                     )
+                     draft_probs_list.append(probs)
+                     forward_batch.positions.add_(1)
+-                elif self.topk == 1 and not _is_hip:
+-                    if _is_cuda:
++                elif self.topk == 1:
++                    if _is_cuda or _is_hip:
++                        if _is_hip:
++                            logger.info_once(
++                                "EAGLE_TOPK1_BACKEND phase=draft_decode "
++                                "backend=triton_split_argmax"
++                            )
+                         topk_p, topk_index = draft_topk1_postprocess(
+                             logits_output.next_token_logits,
+                             forward_batch.positions,
+@@ -1021,6 +1026,16 @@ class EagleDraftWorker(EagleDraftWorkerBase):
+                 draft_logits_output.next_token_logits,
+                 batch.sampling_info.temperatures,
+             )
++        elif self.topk == 1 and _is_hip:
++            logger.info_once(
++                "EAGLE_TOPK1_BACKEND phase=draft_extend "
++                "backend=triton_split_argmax"
++            )
++            ret_topk_p, ret_topk_index = draft_topk1_postprocess(
++                draft_logits_output.next_token_logits,
++                positions=None,
++            )
++            ret_draft_probs = None
+         elif self.topk == 1 and not _is_hip:
+             # Gated to CUDA: see #26358 — ROCm's argmax tie-break corrupts
+             # MTP draft selection on FP8 logits.

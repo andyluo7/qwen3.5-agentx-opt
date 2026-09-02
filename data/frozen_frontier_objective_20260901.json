@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "objective": "Improve the arithmetic mean of P90 full-response interactivity at the 12 frozen MI355X throughput anchors by at least 20 percent without lowering any anchor throughput floor.",
+  "metric": "p90_full_response_interactivity_tokens_per_s_user",
+  "itl_excluded": true,
+  "required_relative_improvement": 0.2,
+  "baseline_mean": 119.92649666666667,
+  "target_mean": 143.911796,
+  "anchors": [
+    {
+      "id": "a01_tp4ep1_c1",
+      "tp": 4,
+      "ep": 1,
+      "concurrency": 1,
+      "kv_offloading": "none",
+      "throughput_floor": 3642.93817,
+      "baseline_p90_interactivity": 244.43371,
+      "source": "data/current_mi355x_33298482346_attempt1/qwen3.5_tp4_conc1_kvnone_spec-mtp_fp4_sglang_tp4-pp1-dcp1-pcp1-ep1-dpafalse_disagg-false_spec-mtp_conc1_mi355x-amds_02_recipe-9725ec21771f4fe2.json"
+    },
+    {
+      "id": "a02_tp2ep1_c1",
+      "tp": 2,
+      "ep": 1,
+      "concurrency": 1,
+      "kv_offloading": "none",
+      "throughput_floor": 7154.29007,
+      "baseline_p90_interactivity": 236.14097,
+      "source": "data/current_mi355x_33298482346_attempt1/qwen3.5_tp2_conc1_kvnone_spec-mtp_fp4_sglang_tp2-pp1-dcp1-pcp1-ep1-dpafalse_disagg-false_spec-mtp_conc1_mi355x-amds_01_recipe-ecf94fe385859291.json"
+    },
+    {
+      "id": "a03_tp2ep1_c4",
+      "tp": 2,
+      "ep": 1,
+      "concurrency": 4,
+      "kv_offloading": "none",
+      "throughput_floor": 11268.78138,
+      "baseline_p90_interactivity": 181.62544,
+      "source": "data/current_mi355x_33298482346_attempt1/qwen3.5_tp2_conc4_kvnone_spec-mtp_fp4_sglang_tp2-pp1-dcp1-pcp1-ep1-dpafalse_disagg-false_spec-mtp_conc4_mi355x-amds_05_recipe-ecf94fe385859291.json"
+    },
+    {
+      "id": "a04_tp2ep1_c8",
+      "tp": 2,
+      "ep": 1,
+      "concurrency": 8,
+      "kv_offloading": "none",
+      "throughput_floor": 19504.46869,
+      "baseline_p90_interactivity": 153.78368,
+      "source": "data/current_mi355x_33298482346_attempt1/qwen3.5_tp2_conc8_kvnone_spec-mtp_fp4_sglang_tp2-pp1-dcp1-pcp1-ep1-dpafalse_disagg-false_spec-mtp_conc8_mi355x-amds_02_recipe-ecf94fe385859291.json"
+    },
+    {
+      "id": "a05_tp2ep1_c12_maxrun4",
+      "tp": 2,
+      "ep": 1,
+      "concurrency": 12,
+      "kv_offloading": "none",
+      "throughput_floor": 26579.15484,
+      "baseline_p90_interactivity": 147.60291,
+      "source": "/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_pr2737_tp2ep1_c12_exact_maxrun4_graph24_3600s_confirm_20260901T001648-0500"
+    },
+    {
+      "id": "a06_tp2ep1_c12_runner",
+      "tp": 2,
+      "ep": 1,
+      "concurrency": 12,
+      "kv_offloading": "none",
+      "throughput_floor": 29878.60324,
+      "baseline_p90_interactivity": 100.76418,
+      "source": "data/current_mi355x_33298482346_attempt1/qwen3.5_tp2_conc12_kvnone_spec-mtp_fp4_sglang_tp2-pp1-dcp1-pcp1-ep1-dpafalse_disagg-false_spec-mtp_conc12_mi355x-amds_02_recipe-ecf94fe385859291.json"
+    },
+    {
+      "id": "a07_tp2ep2_c20",
+      "tp": 2,
+      "ep": 2,
+      "concurrency": 20,
+      "kv_offloading": "dram",
+      "throughput_floor": 43292.13539,
+      "baseline_p90_interactivity": 86.6407,
+      "source": "/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_tp2ep2_c20_pr36330_pr36758asmctx_tokenmeta_p64_prefill8k_maxrun12_pd32_mintok8192_aitercarlegacymax253952_nobubble_customar_900s_20260827T204111-0700"
+    },
+    {
+      "id": "a08_tp2ep2_c22",
+      "tp": 2,
+      "ep": 2,
+      "concurrency": 22,
+      "kv_offloading": "dram",
+      "throughput_floor": 43632.973,
+      "baseline_p90_interactivity": 81.13203,
+      "source": "/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_tp2ep2_c22_pr36330_pr36758asmctx_tokenmeta_p64_prefill8k_maxrun12_pd32_mintok8192_aitercarlegacymax253952_nobubble_customar_900s_20260828T233243-0500"
+    },
+    {
+      "id": "a09_tp2ep2_c32",
+      "tp": 2,
+      "ep": 2,
+      "concurrency": 32,
+      "kv_offloading": "dram",
+      "throughput_floor": 46811.57575,
+      "baseline_p90_interactivity": 78.78076,
+      "source": "/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_tp2ep2_c32_pr36330_pr36758asmctx_tokenmeta_p64_prefill8k_maxrun12_pd32_mintok8192_aitercarlegacymax253952_nobubble_customar_900s_20260829T005004-0500"
+    },
+    {
+      "id": "a10_tp2ep1_c24",
+      "tp": 2,
+      "ep": 1,
+      "concurrency": 24,
+      "kv_offloading": "dram",
+      "throughput_floor": 53830.02915,
+      "baseline_p90_interactivity": 51.54155,
+      "source": "data/current_mi355x_33298482346_attempt1/qwen3.5_tp2_conc24_kvdram-hicache_spec-mtp_fp4_sglang_tp2-pp1-dcp1-pcp1-ep1-dpafalse_disagg-false_spec-mtp_conc24_mi355x-amds_05_recipe-7e1ac8191faabf0f.json"
+    },
+    {
+      "id": "a11_tp2ep1_c28",
+      "tp": 2,
+      "ep": 1,
+      "concurrency": 28,
+      "kv_offloading": "dram",
+      "throughput_floor": 56457.73823,
+      "baseline_p90_interactivity": 41.66606,
+      "source": "data/current_mi355x_33298482346_attempt1/qwen3.5_tp2_conc28_kvdram-hicache_spec-mtp_fp4_sglang_tp2-pp1-dcp1-pcp1-ep1-dpafalse_disagg-false_spec-mtp_conc28_mi355x-amds_07_recipe-7e1ac8191faabf0f.json"
+    },
+    {
+      "id": "a12_tp2ep1_c32",
+      "tp": 2,
+      "ep": 1,
+      "concurrency": 32,
+      "kv_offloading": "dram",
+      "throughput_floor": 59050.50029,
+      "baseline_p90_interactivity": 35.00597,
+      "source": "data/current_mi355x_33298482346_attempt1/qwen3.5_tp2_conc32_kvdram-hicache_spec-mtp_fp4_sglang_tp2-pp1-dcp1-pcp1-ep1-dpafalse_disagg-false_spec-mtp_conc32_mi355x-amds_00_recipe-7e1ac8191faabf0f.json"
+    }
+  ]
+}

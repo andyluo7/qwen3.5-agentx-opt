@@ -1,0 +1,12 @@
+control1_throughput=32145.10988
+control1_p90_interactivity=131.59335
+control2_throughput=32012.68219
+control2_p90_interactivity=129.77722
+control_drift_ok=1
+provisional_frontier_mean=142.9698325
+provisional_relative_mean_gain_pct=19.2145493062987
+promotion_candidates=pr35872-pr37465-aiter5190-mtpverifyasm-c12-maxrun6-graph24-page16-900s-screen
+advance_selected_candidates_to_isolated_bracket=1
+summary=/shared/amdgpu/home/andy_luo_3v7/qwen35-pr2737-c12-maxrun-ladder-900s-20260902T161815-0500.tsv
+manifest=/shared/amdgpu/home/andy_luo_3v7/qwen35-pr2737-c12-maxrun-ladder-900s-20260902T161815-0500.candidates.json
+evaluation=/shared/amdgpu/home/andy_luo_3v7/qwen35-pr2737-c12-maxrun-ladder-900s-20260902T161815-0500.evaluation.json

@@ -1,0 +1,135 @@
+From 08c955a75d412ce5b9d1c4b10f6315bb0585750e Mon Sep 17 00:00:00 2001
+From: Zijie Chen <300606707+zijiecode@users.noreply.github.com>
+Date: Tue, 1 Sep 2026 12:35:21 -0700
+Subject: [PATCH] Use aiter's gfx950 assembly MTP-verify attention kernel in
+ the aiter backend
+
+Route the speculative-decoding verify attention (uniform q_len 4, head_dim
+256, NHD page-16 fp8 KV cache, GQA ratio 16 or 8) to aiter's
+mtp_verify_attn_fwd_asm (ROCm/aiter#5190) when available on gfx95x.
+~5 TB/s effective KV bandwidth, 2.0-3.4x the Triton
+unified_attention_3d_mtp path at production shapes; also unlocks the
+native ratio-8 path for TP4, which previously fell back to an older
+kernel. On by default when supported; SGLANG_ASM_VERIFY_ATTN=0 turns it
+off, and unsupported shapes keep the existing Triton path.
+---
+ .../ops/attention/unified_attention_3d_mtp.py | 64 ++++++++++++++++++-
+ .../srt/layers/attention/aiter_backend.py     | 12 +++-
+ 2 files changed, 74 insertions(+), 2 deletions(-)
+
+diff --git a/python/sglang/kernels/ops/attention/unified_attention_3d_mtp.py b/python/sglang/kernels/ops/attention/unified_attention_3d_mtp.py
+index 720a2d2099..344424fa82 100644
+--- a/python/sglang/kernels/ops/attention/unified_attention_3d_mtp.py
++++ b/python/sglang/kernels/ops/attention/unified_attention_3d_mtp.py
+@@ -42,6 +42,55 @@ import triton.language as tl
+ from aiter.ops.triton.utils._triton.kernel_repr import make_kernel_repr
+ from aiter.ops.triton.utils.types import e4m3_dtype
+ 
++try:  # gfx950 assembly MTP-verify attention (aiter >= the version that ships it)
++    from aiter import mtp_verify_attn_fwd_asm as _aiter_mtp_verify_attn_fwd_asm
++except ImportError:
++    _aiter_mtp_verify_attn_fwd_asm = None
++
++import os as _os
++
++from sglang.srt.utils import is_gfx95_supported
++
++
++def asm_verify_attn_enabled() -> bool:
++    """aiter's gfx950 assembly verify-attention kernel (mtp_verify_attn_fwd_asm)
++    is used by default when aiter provides it and the batch shape is supported;
++    SGLANG_ASM_VERIFY_ATTN=0 turns it off."""
++    return (
++        _os.environ.get("SGLANG_ASM_VERIFY_ATTN", "1") == "1"
++        and _aiter_mtp_verify_attn_fwd_asm is not None
++        and is_gfx95_supported()
++    )
++
++
++def asm_verify_attn_supported(
++    q, k, v, seqused_k, cu_seqlens_q, block_table, num_queries_per_kv, max_seqlen_q,
++    k_descale, v_descale,
++) -> bool:
++    num_tokens, _, head_size = q.shape
++    num_seqs = seqused_k.shape[0]
++    hkv = k.shape[2]
++    return (
++        head_size == 256
++        and k.shape[1] == 16
++        and num_queries_per_kv in (16, 8)
++        # The asm kernel assumes a uniform q_len of exactly 4 (verify = 3 draft + 1);
++        # sglang verify batches are uniform, so the token-count check suffices.
++        and max_seqlen_q == 4
++        and num_tokens == num_seqs * 4
++        and q.stride(1) == head_size
++        and q.stride(2) == 1
++        and k.is_contiguous()
++        and v.is_contiguous()
++        and seqused_k.dtype == torch.int64
++        and cu_seqlens_q.dtype == torch.int32
++        and block_table.dtype == torch.int32
++        and k_descale is not None
++        and v_descale is not None
++        and k_descale.dtype == torch.float32
++        and v_descale.dtype == torch.float32
++    )
++
+ float8_info = torch.finfo(e4m3_dtype)
+ 
+ 
+@@ -626,11 +675,24 @@ def unified_attention_3d_mtp_func(
+     # which packs two draft tokens per tile. Any (16N : N) GQA layout works because
+     # the kernel indexes KV through kv_head_idx = program_id(1).
+     assert num_query_heads % num_kv_heads == 0
+-    assert num_queries_per_kv == 16
+     assert head_size == 256 and k.shape[1] == 16
+     assert q.dtype == torch.bfloat16
+     assert k.dtype == e4m3_dtype and v.dtype == e4m3_dtype
+ 
++    if asm_verify_attn_enabled() and asm_verify_attn_supported(
++        q, k, v, seqused_k, cu_seqlens_q, block_table,
++        num_queries_per_kv, max_seqlen_q, k_descale, v_descale,
++    ):
++        # aiter's gfx950 assembly kernel: reads the page-16 fp8 cache in place,
++        # supports GQA ratios 16 and 8, does its own split-KV reduce into `out`.
++        return _aiter_mtp_verify_attn_fwd_asm(
++            q, k, v, block_table, seqused_k, cu_seqlens_q,
++            k_descale, v_descale, softmax_scale, out=out,
++        )
++
++    # The Triton kernel below is only correct for the 16:1 GQA layout.
++    assert num_queries_per_kv == 16
++
+     block_m = 32
+     block_q = block_m // num_queries_per_kv
+     tile_size = 32
+diff --git a/python/sglang/srt/layers/attention/aiter_backend.py b/python/sglang/srt/layers/attention/aiter_backend.py
+index 0e73867d2f..4757718bab 100755
+--- a/python/sglang/srt/layers/attention/aiter_backend.py
++++ b/python/sglang/srt/layers/attention/aiter_backend.py
+@@ -62,6 +62,7 @@ try:
+     from aiter.ops.triton.attention.unified_attention import unified_attention
+ 
+     from sglang.kernels.ops.attention.unified_attention_3d_mtp import (
++        asm_verify_attn_enabled,
+         unified_attention_3d_mtp_func,
+     )
+ except ImportError:
+@@ -2456,7 +2457,16 @@ class AiterAttnBackend(AttentionBackend):
+                         is_gfx95_supported()
+                         and 1 < self.forward_metadata.max_q_len <= 4
+                         and max_kv_len > 512
+-                        and num_queries_per_kv == 16
++                        and (
++                            num_queries_per_kv == 16
++                            or (
++                                num_queries_per_kv == 8
++                                # the asm kernel needs the full 4-token verify
++                                # block; shorter draft configs keep the old path
++                                and self.forward_metadata.max_q_len == 4
++                                and asm_verify_attn_enabled()
++                            )
++                        )
+                         and layer.tp_k_head_num == layer.tp_v_head_num
+                         and layer.qk_head_dim == 256
+                         and layer.v_head_dim == 256

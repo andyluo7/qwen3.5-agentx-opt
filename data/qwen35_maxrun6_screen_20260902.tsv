@@ -1,0 +1,4 @@
+label	max_running_requests	throughput_per_gpu	p90_interactivity	duration_seconds	profiled	warmups	errors	avg_power_w	was_cancelled	archive
+control1	5	32145.10988	131.59335	927.92851	632	131	0	686.489	false	/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-mtpverifyasm_maxrun5_graph24_page16_recv30_control1_900s_20260902T161816-0500
+candidate_maxrun6	6	33697.31802	112.01359	910.34956	645	131	0	689.217	false	/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-mtpverifyasm_maxrun6_graph24_page16_recv30_candidate_maxrun6_900s_20260902T164058-0500
+control2	5	32012.68219	129.77722	929.37734	631	131	0	690.972	false	/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-mtpverifyasm_maxrun5_graph24_page16_recv30_control2_900s_20260902T170255-0500

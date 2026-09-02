@@ -44,6 +44,8 @@ printf '%s command_rc=%s result=%s\n' \
 archive_rc=0
 if squeue -h -j "$job_id" 2>/dev/null | grep -q .; then
   mkdir -p "$archive_dir"
+  # Expansion in this payload is intentionally deferred to the compute node.
+  # shellcheck disable=SC2016
   srun --jobid="$job_id" --overlap --account=r7n --nodes=1 --ntasks=1 --cpus-per-task=1 \
     --nodelist="$target_node" bash -lc '
       set -u

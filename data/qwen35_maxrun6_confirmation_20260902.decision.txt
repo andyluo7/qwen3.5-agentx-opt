@@ -1,0 +1,11 @@
+candidate_name=pr35872-pr37465-aiter5190-mtpverifyasm-maxrun6-c12-maxrun6-3600s-confirm
+throughput_per_gpu=30453.91358
+p90_interactivity=126.37218
+candidate_selected_anchor_count=1
+provisional_frontier_mean=144.16638166666667
+provisional_relative_mean_gain_pct=20.212284752529946
+remaining_mean_gain=0.0
+advance_to_full_node_postflight=1
+archive=/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-mtpverifyasm-maxrun6_maxrun6_graph24_page16_3600s_confirm_20260902T172507-0500
+manifest=/shared/amdgpu/home/andy_luo_3v7/qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-mtpverifyasm-maxrun6_maxrun6_graph24_page16_3600s_confirm_20260902T172507-0500.candidates.json
+evaluation=/shared/amdgpu/home/andy_luo_3v7/qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-mtpverifyasm-maxrun6_maxrun6_graph24_page16_3600s_confirm_20260902T172507-0500.evaluation.json

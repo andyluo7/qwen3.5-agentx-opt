@@ -1,0 +1,15 @@
+[
+  {
+    "absolute_delta": 5.267201714787006e-07,
+    "aggregate": "/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-mtpverifyasm-maxrun6_maxrun6_graph24_page16_3600s_confirm_20260902T172507-0500/qwen35_pr2737_c12_exact_qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-mtpverifyasm-maxrun6_maxrun6_graph24_page16_3600s_confirm_20260902T172507-0500.json",
+    "archive": "/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-mtpverifyasm-maxrun6_maxrun6_graph24_page16_3600s_confirm_20260902T172507-0500",
+    "passed": true,
+    "raw_p90_full_response_latency_ms_per_token": 7.913134078782271,
+    "raw_profiled_records": 2206,
+    "raw_records_with_defined_full_response_interactivity": 2204,
+    "recomputed_p90_interactivity_tokens_per_s_user": 126.37217947327983,
+    "reported_p90_interactivity_tokens_per_s_user": 126.37218,
+    "reported_profiled_records": 2206,
+    "tolerance": 0.0001
+  }
+]

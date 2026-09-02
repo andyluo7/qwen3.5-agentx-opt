@@ -1,0 +1,124 @@
+diff --git a/python/sglang/kernels/ops/speculative/topk1.py b/python/sglang/kernels/ops/speculative/topk1.py
+index 93f658f2a1..ef1620a9a1 100644
+--- a/python/sglang/kernels/ops/speculative/topk1.py
++++ b/python/sglang/kernels/ops/speculative/topk1.py
+@@ -49,6 +49,7 @@ def _draft_topk1_finalize_kernel(
+     draft_token_column,
+     num_splits: tl.constexpr,
+     WRITE_DRAFT_TOKEN: tl.constexpr,
++    ADVANCE_POSITIONS: tl.constexpr,
+     BLOCK: tl.constexpr,
+ ):
+     row = tl.program_id(0)
+@@ -67,33 +68,35 @@ def _draft_topk1_finalize_kernel(
+     if WRITE_DRAFT_TOKEN:
+         tl.store(draft_tokens + row * draft_tokens_stride + draft_token_column, index)
+ 
+-    position = tl.load(positions + row)
+-    tl.store(positions + row, position + 1)
++    # Draft-forward advances positions; draft-extend only selects the next token.
++    # This constexpr removes the load/store entirely from the latter kernel.
++    if ADVANCE_POSITIONS:
++        position = tl.load(positions + row)
++        tl.store(positions + row, position + 1)
+ 
+ 
+ def draft_topk1_postprocess(
+     next_token_logits: torch.Tensor,
+-    positions: torch.Tensor,
++    positions: torch.Tensor | None,
+     draft_tokens: torch.Tensor | None = None,
+     draft_token_column: int = 0,
+ ):
+-    """Argmax draft logits for topk=1 and advance positions.
++    """Select top-k=1 and optionally update positions and the draft chain.
+ 
+-    PyTorch eager argmax reduces each row with too little parallelism for the
+-    GLM/DSV4 vocab widths in CUDA graph replay. This split reduction exposes
+-    the vocab dimension across CTAs, then finalizes one token per row.
+-
+-    If ``draft_tokens`` is given, the finalize kernel also stores the argmax
+-    into ``draft_tokens[:, draft_token_column]``, mutating the caller-owned
+-    buffer in place. ``topk_p`` is returned as constant 1.0: topk=1 drafting
+-    is greedy and the chain probabilities are unused downstream.
++    The split reduction masks vocabulary-tail lanes and treats NaNs as
++    ``-1e30``, so every returned index is within the real vocabulary.
++    ``positions`` is required by draft-forward and advanced in the finalize
++    kernel. Draft-extend passes ``None`` because its position bookkeeping is
++    already complete and only argmax output is needed.
+     """
+     assert next_token_logits.ndim == 2
+     assert next_token_logits.stride(1) == 1
+-    assert positions.ndim == 1
+-    assert positions.is_contiguous()
+-    assert positions.shape[0] == next_token_logits.shape[0]
+-    assert positions.device == next_token_logits.device
++    advance_positions = positions is not None
++    if advance_positions:
++        assert positions.ndim == 1
++        assert positions.is_contiguous()
++        assert positions.shape[0] == next_token_logits.shape[0]
++        assert positions.device == next_token_logits.device
+     write_draft_token = draft_tokens is not None
+     if write_draft_token:
+         assert draft_tokens.ndim == 2
+@@ -104,6 +107,7 @@ def draft_topk1_postprocess(
+         assert 0 <= draft_token_column < draft_tokens.shape[1]
+ 
+     bs, vocab_size = next_token_logits.shape
++    assert vocab_size > 0
+     topk_p = torch.empty((bs, 1), dtype=torch.float32, device=next_token_logits.device)
+     topk_index = torch.empty(
+         (bs, 1), dtype=torch.int64, device=next_token_logits.device
+@@ -138,12 +142,13 @@ def draft_topk1_postprocess(
+         partial_indices,
+         topk_p,
+         topk_index,
+-        positions,
++        positions if advance_positions else topk_index,
+         draft_tokens if write_draft_token else topk_index,
+         draft_tokens.stride(0) if write_draft_token else 0,
+         draft_token_column,
+         num_splits,
+         WRITE_DRAFT_TOKEN=write_draft_token,
++        ADVANCE_POSITIONS=advance_positions,
+         BLOCK=triton.next_power_of_2(num_splits),
+         num_warps=1,
+     )
+diff --git a/python/sglang/srt/speculative/eagle_worker_v2.py b/python/sglang/srt/speculative/eagle_worker_v2.py
+index afdd57ac7b..1661eed4ac 100644
+--- a/python/sglang/srt/speculative/eagle_worker_v2.py
++++ b/python/sglang/srt/speculative/eagle_worker_v2.py
+@@ -684,8 +684,13 @@ class EagleDraftWorker(EagleDraftWorkerBase):
+                     )
+                     draft_probs_list.append(probs)
+                     forward_batch.positions.add_(1)
+-                elif self.topk == 1 and not _is_hip:
+-                    if _is_cuda:
++                elif self.topk == 1:
++                    if _is_cuda or _is_hip:
++                        if _is_hip:
++                            logger.info_once(
++                                "EAGLE_TOPK1_BACKEND phase=draft_decode "
++                                "backend=triton_split_argmax"
++                            )
+                         topk_p, topk_index = draft_topk1_postprocess(
+                             logits_output.next_token_logits,
+                             forward_batch.positions,
+@@ -1021,6 +1026,16 @@ class EagleDraftWorker(EagleDraftWorkerBase):
+                 draft_logits_output.next_token_logits,
+                 batch.sampling_info.temperatures,
+             )
++        elif self.topk == 1 and _is_hip:
++            logger.info_once(
++                "EAGLE_TOPK1_BACKEND phase=draft_extend "
++                "backend=triton_split_argmax"
++            )
++            ret_topk_p, ret_topk_index = draft_topk1_postprocess(
++                draft_logits_output.next_token_logits,
++                positions=None,
++            )
++            ret_draft_probs = None
+         elif self.topk == 1 and not _is_hip:
+             # Gated to CUDA: see #26358 — ROCm's argmax tie-break corrupts
+             # MTP draft selection on FP8 logits.

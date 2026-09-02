@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "points": [
+    {
+      "name": "qwen35-pr2737-c12-maxrun6-graph24-page16-scheduler30-900s-screen",
+      "status": "provisional",
+      "throughput_per_gpu_tokens_per_s": 32200.99016,
+      "p90_interactivity_tokens_per_s_user": 110.30361,
+      "artifact": "/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_pr2737_tp2ep1_c12_exact_maxrun6_graph24_candidate_maxrun6_900s_20260901T115042-0500",
+      "metadata": {
+        "evidence_stage": "verified_900s_qualification_screen",
+        "concurrency": 12,
+        "max_running_requests": 6,
+        "cuda_graph_max_bs": 24,
+        "scheduler_recv_interval": 30,
+        "page_size": 16,
+        "duration_seconds": 916.48784,
+        "profiled_requests": 626,
+        "warmup_requests": 131,
+        "error_requests": 0,
+        "avg_power_w": 698.76,
+        "sglang_commit": "cdbfe90b4a6c728e03e6520862d792501b3a97bb",
+        "aiter_commit": "c16d44b93a528b2a4bfd6d8d3409116d465872a9",
+        "sglang_patch_sha256": "none",
+        "aiter_patch_sha256": "none",
+        "raw_p90_recomputed": true,
+        "power_valid": true,
+        "artifact_checksums_valid": true,
+        "teardown_clean": true
+      }
+    }
+  ]
+}

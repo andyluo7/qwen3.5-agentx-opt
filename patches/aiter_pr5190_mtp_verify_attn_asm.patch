@@ -1,0 +1,783 @@
+From eae8d27f1f55e33281b14ffe50de8df2e7f2c49d Mon Sep 17 00:00:00 2001
+From: Zijie Chen <300606707+zijiecode@users.noreply.github.com>
+Date: Tue, 1 Sep 2026 12:10:42 -0700
+Subject: [PATCH] Add gfx950 assembly MTP-verify attention for head_dim 256 fp8
+ paged KV (mtp_verify_attn_fwd_asm)
+
+Speculative-decoding verify attention (uniform q_len 4) over an NHD page-16
+fp8 KV cache with head_dim 256, GQA ratio 16 or 8, developed for SGLang
+serving of Qwen3.5 on MI355X. Split-KV main kernel (vattn_asm) plus segment
+reduce (vred_asm), ~5 TB/s effective KV bandwidth, 2.0-3.4x SGLang's Triton
+unified_attention_3d_mtp at production shapes. Follows the existing ASM op
+conventions: code objects under hsa/gfx950/mtp_verify_attn/, AiterAsmKernel
+launcher in csrc/py_itfs_cu/asm_mtp_verify_attn.cu, ctypes op
+aiter.mtp_verify_attn_fwd_asm, op_tests/test_mtp_verify_attn_asm.py.
+---
+ aiter/jit/optCompilerConfig.json              |  11 +
+ aiter/ops/attention.py                        |  76 +++++++
+ csrc/py_itfs_cu/asm_mtp_verify_attn.cu        | 206 ++++++++++++++++++
+ .../mtp_verify_attn/vattn_hd256_fp8_gqa16.co  | Bin 0 -> 16128 bytes
+ .../mtp_verify_attn/vattn_hd256_fp8_gqa8.co   | Bin 0 -> 16192 bytes
+ hsa/gfx950/mtp_verify_attn/vattn_reduce.co    | Bin 0 -> 7720 bytes
+ op_tests/test_mtp_verify_attn_asm.py          | 126 +++++++++++
+ 7 files changed, 419 insertions(+)
+ create mode 100644 csrc/py_itfs_cu/asm_mtp_verify_attn.cu
+ create mode 100755 hsa/gfx950/mtp_verify_attn/vattn_hd256_fp8_gqa16.co
+ create mode 100755 hsa/gfx950/mtp_verify_attn/vattn_hd256_fp8_gqa8.co
+ create mode 100755 hsa/gfx950/mtp_verify_attn/vattn_reduce.co
+ create mode 100644 op_tests/test_mtp_verify_attn_asm.py
+
+diff --git a/aiter/jit/optCompilerConfig.json b/aiter/jit/optCompilerConfig.json
+index a08d1dde2..d03855ee4 100644
+--- a/aiter/jit/optCompilerConfig.json
++++ b/aiter/jit/optCompilerConfig.json
+@@ -53,6 +53,17 @@
+         "verbose": "False",
+         "blob_gen_cmd": "f'{AITER_META_DIR}/hsa/codegen.py -m pa --output_dir {{}}'"
+     },
++    "module_mtp_verify_attn_asm": {
++        "srcs": [
++            "f'{AITER_CSRC_DIR}/py_itfs_cu/asm_mtp_verify_attn.cu'"
++        ],
++        "flags_extra_cc": [],
++        "flags_extra_hip": [],
++        "extra_ldflags": "None",
++        "extra_include": [],
++        "verbose": "False",
++        "blob_gen_cmd": "''"
++    },
+     "module_pa_metadata": {
+         "srcs": [
+             "f'{AITER_CSRC_DIR}/pybind/pa_metadata_pybind.cu'",
+diff --git a/aiter/ops/attention.py b/aiter/ops/attention.py
+index 67e5cf173..04154d642 100644
+--- a/aiter/ops/attention.py
++++ b/aiter/ops/attention.py
+@@ -2201,3 +2201,79 @@ def mla_decode_fwd_opus_stage1(
+     kv_scale: torch.Tensor | None = None,  # float[1] per-tensor descale
+     causal: bool = True,  # mask across the max_seqlen_q query tokens
+ ) -> None: ...
++
++
++@compile_ops(
++    "module_mtp_verify_attn_asm", fc_name="mtp_verify_attn_fwd", ffi_type="ctypes"
++)
++def _mtp_verify_attn_fwd(
++    Q: torch.Tensor,
++    K: torch.Tensor,
++    V: torch.Tensor,
++    block_tables: torch.Tensor,
++    seq_lens: torch.Tensor,
++    cu_seqlens_q: torch.Tensor,
++    k_descale: torch.Tensor,
++    v_descale: torch.Tensor,
++    segm_out: torch.Tensor,
++    segm_max: torch.Tensor,
++    segm_expsum: torch.Tensor,
++    out: torch.Tensor,
++    softmax_scale: float,
++) -> None: ...
++
++
++def mtp_verify_attn_num_segments(num_seqs: int, num_kv_heads: int) -> int:
++    """Split-KV segments per sequence so the grid (segments, seqs, kv heads)
++    fills the GPU in one round of 1-work-group-per-CU. Any value in [1, 64] is
++    valid; empty segments are written neutrally by the kernel."""
++    num_cus = torch.cuda.get_device_properties(torch.cuda.current_device()).multi_processor_count
++    segs = max(1, num_cus // max(1, num_seqs * num_kv_heads))
++    segs = 1 << (segs.bit_length() - 1)
++    return max(1, min(64, segs))
++
++
++def mtp_verify_attn_fwd_asm(
++    q: torch.Tensor,
++    k_cache: torch.Tensor,
++    v_cache: torch.Tensor,
++    block_tables: torch.Tensor,
++    seq_lens: torch.Tensor,
++    cu_seqlens_q: torch.Tensor,
++    k_descale: torch.Tensor,
++    v_descale: torch.Tensor,
++    softmax_scale: float,
++    num_segments: int | None = None,
++    out: torch.Tensor | None = None,
++) -> torch.Tensor:
++    """MTP-verify attention on gfx950 (hand-written assembly).
++
++    Speculative-decoding verify step: every sequence has exactly 4 query tokens
++    (q_len 4, causal against the last 4 KV positions) attending to its paged
++    fp8 KV cache. Shapes:
++      q:            [num_seqs * 4, num_q_heads, 256] bf16 (token-major, cu_seqlens_q order)
++      k_cache/v_cache: [num_pages, 16, num_kv_heads, 256] fp8 e4m3 (NHD, page size 16)
++      block_tables: [num_seqs, max_pages] int32
++      seq_lens:     [num_seqs] int64, KV length including the 4 query tokens
++      cu_seqlens_q: [num_seqs + 1] int32
++      k_descale / v_descale: [1] fp32 device tensors (per-tensor KV scales)
++    GQA ratio (num_q_heads / num_kv_heads) must be 16 or 8. Returns bf16
++    [num_seqs * 4, num_q_heads, 256].
++    """
++    num_tokens, num_q_heads, head_size = q.shape
++    num_seqs = seq_lens.shape[0]
++    num_kv_heads = k_cache.shape[2]
++    if num_segments is None:
++        num_segments = mtp_verify_attn_num_segments(num_seqs, num_kv_heads)
++    segm_out = torch.empty(
++        num_tokens, num_q_heads, num_segments, head_size, dtype=torch.float32, device=q.device
++    )
++    segm_max = torch.empty(num_tokens, num_q_heads, num_segments, dtype=torch.float32, device=q.device)
++    segm_expsum = torch.empty_like(segm_max)
++    if out is None:
++        out = torch.empty(num_tokens, num_q_heads, head_size, dtype=q.dtype, device=q.device)
++    _mtp_verify_attn_fwd(
++        q, k_cache, v_cache, block_tables, seq_lens, cu_seqlens_q,
++        k_descale, v_descale, segm_out, segm_max, segm_expsum, out, float(softmax_scale),
++    )
++    return out
+diff --git a/csrc/py_itfs_cu/asm_mtp_verify_attn.cu b/csrc/py_itfs_cu/asm_mtp_verify_attn.cu
+new file mode 100644
+index 000000000..57242ea63
+--- /dev/null
++++ b/csrc/py_itfs_cu/asm_mtp_verify_attn.cu
+@@ -0,0 +1,206 @@
++// SPDX-License-Identifier: MIT
++// Copyright (C) 2024-2026, Advanced Micro Devices, Inc. All rights reserved.
++//
++// MTP-verify attention for gfx950: the speculative-decoding verify step
++// (uniform q_len = 4 query tokens per sequence) over an NHD page-16 fp8 KV
++// cache with head_dim 256, GQA ratio 16 or 8. Split-KV: the main kernel
++// writes per-segment partial outputs / max / expsum, the reduce kernel merges
++// them into the final bf16 output.
++#include "aiter_tensor.h"
++#include <cmath>
++#include <cstdint>
++
++namespace {
++
++// Must match the kernarg layout of hsa/gfx950/mtp_verify_attn/src/vattn3_core.s
++struct __attribute__((packed)) VattnKernelArgs
++{
++    void* ptr_K;          // [num_pages, 16, num_kv_heads, 256] fp8
++    void* ptr_V;
++    void* ptr_Q;          // [num_tokens, num_q_heads, 256] bf16
++    void* ptr_BT;         // block tables [num_seqs, max_pages] int32
++    void* ptr_SL;         // kv seq lens [num_seqs] int64
++    void* ptr_CU;         // cu_seqlens_q [num_seqs + 1] int32
++    void* ptr_SO;         // segm out    [num_tokens, num_q_heads, segs, 256] fp32
++    void* ptr_SM;         // segm max    [num_tokens, num_q_heads, segs] fp32
++    void* ptr_SE;         // segm expsum [num_tokens, num_q_heads, segs] fp32
++    int32_t num_segments;
++    int32_t bt_stride0;   // block table row stride (elements)
++    int32_t q_stride0;    // Q token stride (elements)
++    int32_t num_kv_heads;
++    int32_t num_q_heads;
++    float scale_log2;     // softmax_scale * log2(e); kernel multiplies by *k_descale
++    float v_scale;        // 1.0; kernel multiplies by *v_descale
++    uint32_t magic_m;     // magic division by (num_segments * 16)
++    int32_t magic_sh;
++    int32_t _pad;
++    void* ptr_KD;         // k_descale [1] fp32 (device)
++    void* ptr_VD;         // v_descale [1] fp32 (device)
++};
++static_assert(sizeof(VattnKernelArgs) == 128, "kernarg layout must match vattn3_core.s");
++
++// Must match hsa/gfx950/mtp_verify_attn/src/vred.s
++struct __attribute__((packed)) VredKernelArgs
++{
++    void* ptr_O;          // [num_tokens, num_q_heads, 256] bf16
++    void* ptr_SO;
++    void* ptr_SM;
++    void* ptr_SE;
++    uint32_t num_q_heads;
++    uint32_t num_segments;
++    uint32_t o_stride0;   // elements
++    uint32_t o_stride1;   // elements
++    uint32_t magic_m;     // magic division by num_q_heads
++    uint32_t magic_sh;
++};
++static_assert(sizeof(VredKernelArgs) == 56, "kernarg layout must match vred.s");
++
++// (M, sh) such that ((n * M) >> 32) >> sh == n / d for all n < 2^31.
++void magic_u32(uint32_t d, uint32_t& M, uint32_t& sh)
++{
++    if((d & (d - 1)) == 0)
++    {
++        M  = 1u << 31;
++        sh = 0;
++        for(uint32_t x = d; x > 1; x >>= 1)
++            sh++;
++        sh -= 1;
++        return;
++    }
++    uint32_t s = 0;
++    for(uint32_t x = d; x > 1; x >>= 1)
++        s++;
++    uint64_t m = ((1ull << (32 + s)) + d - 1) / d;
++    AITER_CHECK(m < (1ull << 32), "magic_u32: divisor ", d, " out of range");
++    M  = static_cast<uint32_t>(m);
++    sh = s;
++}
++
++const float k_log2e = 1.4426950408889634f;
++
++} // namespace
++
++AITER_C_ITFS void mtp_verify_attn_fwd(
++    aiter_tensor_t* Q,            // [num_tokens, num_q_heads, 256] bf16, num_tokens = 4 * num_seqs
++    aiter_tensor_t* K,            // [num_pages, 16, num_kv_heads, 256] fp8 e4m3 (NHD page 16)
++    aiter_tensor_t* V,            // same layout as K
++    aiter_tensor_t* block_tables, // [num_seqs, max_pages] int32
++    aiter_tensor_t* seq_lens,     // [num_seqs] int64, kv length including the 4 query tokens
++    aiter_tensor_t* cu_seqlens_q, // [num_seqs + 1] int32
++    aiter_tensor_t* k_descale,    // [1] fp32, device
++    aiter_tensor_t* v_descale,    // [1] fp32, device
++    aiter_tensor_t* segm_out,     // [num_tokens, num_q_heads, num_segments, 256] fp32 workspace
++    aiter_tensor_t* segm_max,     // [num_tokens, num_q_heads, num_segments] fp32 workspace
++    aiter_tensor_t* segm_expsum,  // [num_tokens, num_q_heads, num_segments] fp32 workspace
++    aiter_tensor_t* out,          // [num_tokens, num_q_heads, 256] bf16
++    float softmax_scale,
++    hipStream_t stream)
++{
++    const int num_tokens   = static_cast<int>(Q->size(0));
++    const int num_q_heads  = static_cast<int>(Q->size(1));
++    const int head_size    = static_cast<int>(Q->size(2));
++    const int page_size    = static_cast<int>(K->size(1));
++    const int num_kv_heads = static_cast<int>(K->size(2));
++    const int num_seqs     = static_cast<int>(seq_lens->size(0));
++    const int num_segments = static_cast<int>(segm_max->size(2));
++
++    AITER_CHECK(Q->dtype() == AITER_DTYPE_bf16, __func__, ": Q must be bf16");
++    AITER_CHECK(K->dtype() == AITER_DTYPE_fp8 && V->dtype() == AITER_DTYPE_fp8,
++                __func__, ": K/V must be fp8 e4m3");
++    AITER_CHECK(head_size == 256 && K->size(3) == 256, __func__, ": head_dim must be 256");
++    AITER_CHECK(page_size == 16, __func__, ": page size must be 16");
++    AITER_CHECK(num_tokens == 4 * num_seqs, __func__,
++                ": uniform q_len of 4 required (num_tokens = 4 * num_seqs)");
++    AITER_CHECK(num_q_heads % num_kv_heads == 0, __func__, ": bad GQA layout");
++    const int gqa = num_q_heads / num_kv_heads;
++    AITER_CHECK(gqa == 16 || gqa == 8, __func__, ": GQA ratio must be 16 or 8, got ", gqa);
++    AITER_CHECK(Q->stride(2) == 1 && Q->stride(1) == head_size, __func__, ": Q heads must be contiguous");
++    AITER_CHECK(K->stride(3) == 1 && K->stride(2) == head_size &&
++                K->stride(1) == num_kv_heads * head_size &&
++                K->stride(0) == page_size * num_kv_heads * head_size,
++                __func__, ": K must be a contiguous NHD page-16 cache");
++    AITER_CHECK(V->stride(3) == 1 && V->stride(2) == head_size &&
++                V->stride(1) == num_kv_heads * head_size &&
++                V->stride(0) == page_size * num_kv_heads * head_size,
++                __func__, ": V must be a contiguous NHD page-16 cache");
++    AITER_CHECK(seq_lens->element_size() == 8, __func__, ": seq_lens must be int64");
++    AITER_CHECK(cu_seqlens_q->element_size() == 4 && block_tables->element_size() == 4,
++                __func__, ": cu_seqlens_q / block_tables must be int32");
++    AITER_CHECK(k_descale->element_size() == 4 && v_descale->element_size() == 4,
++                __func__, ": k/v descale must be fp32");
++    AITER_CHECK(segm_out->size(0) == num_tokens && segm_out->size(1) == num_q_heads &&
++                segm_out->size(2) == num_segments && segm_out->size(3) == head_size &&
++                segm_out->is_contiguous(),
++                __func__, ": segm_out must be [num_tokens, num_q_heads, num_segments, 256] contiguous");
++    AITER_CHECK(segm_max->is_contiguous() && segm_expsum->is_contiguous(), __func__,
++                ": segm_max / segm_expsum must be contiguous");
++    AITER_CHECK(num_segments >= 1 && num_segments <= 64, __func__, ": num_segments must be in [1, 64]");
++    AITER_CHECK(out->dtype() == AITER_DTYPE_bf16 && out->stride(2) == 1, __func__,
++                ": out must be bf16 with a contiguous head dim");
++
++    const HipDeviceGuard device_guard(Q->device_id);
++
++    VattnKernelArgs args = {};
++    size_t arg_size      = sizeof(args);
++    args.ptr_K           = K->data_ptr();
++    args.ptr_V           = V->data_ptr();
++    args.ptr_Q           = Q->data_ptr();
++    args.ptr_BT          = block_tables->data_ptr();
++    args.ptr_SL          = seq_lens->data_ptr();
++    args.ptr_CU          = cu_seqlens_q->data_ptr();
++    args.ptr_SO          = segm_out->data_ptr();
++    args.ptr_SM          = segm_max->data_ptr();
++    args.ptr_SE          = segm_expsum->data_ptr();
++    args.num_segments    = num_segments;
++    args.bt_stride0      = static_cast<int32_t>(block_tables->stride(0));
++    args.q_stride0       = static_cast<int32_t>(Q->stride(0));
++    args.num_kv_heads    = num_kv_heads;
++    args.num_q_heads     = num_q_heads;
++    args.scale_log2      = softmax_scale * k_log2e;
++    args.v_scale         = 1.0f;
++    uint32_t m, sh;
++    magic_u32(static_cast<uint32_t>(num_segments) * 16u, m, sh);
++    args.magic_m  = m;
++    args.magic_sh = static_cast<int32_t>(sh);
++    args._pad     = 0;
++    args.ptr_KD   = k_descale->data_ptr();
++    args.ptr_VD   = v_descale->data_ptr();
++
++    static AiterAsmKernel impl_gqa16("vattn_asm", "/mtp_verify_attn/vattn_hd256_fp8_gqa16.co");
++    static AiterAsmKernel impl_gqa8("vattn_asm", "/mtp_verify_attn/vattn_hd256_fp8_gqa8.co");
++    static AiterAsmKernel impl_reduce("vred_asm", "/mtp_verify_attn/vattn_reduce.co");
++
++    AiterAsmKernel* impl = (gqa == 16) ? &impl_gqa16 : &impl_gqa8;
++    impl->launch_kernel({&args,
++                         &arg_size,
++                         num_segments, // gdx: KV segments
++                         num_seqs,     // gdy
++                         num_kv_heads, // gdz
++                         512,          // bdx: 8 waves
++                         1,
++                         1,
++                         stream});
++
++    VredKernelArgs rargs = {};
++    size_t rarg_size     = sizeof(rargs);
++    rargs.ptr_O          = out->data_ptr();
++    rargs.ptr_SO         = segm_out->data_ptr();
++    rargs.ptr_SM         = segm_max->data_ptr();
++    rargs.ptr_SE         = segm_expsum->data_ptr();
++    rargs.num_q_heads    = static_cast<uint32_t>(num_q_heads);
++    rargs.num_segments   = static_cast<uint32_t>(num_segments);
++    rargs.o_stride0      = static_cast<uint32_t>(out->stride(0));
++    rargs.o_stride1      = static_cast<uint32_t>(out->stride(1));
++    magic_u32(static_cast<uint32_t>(num_q_heads), m, sh);
++    rargs.magic_m  = m;
++    rargs.magic_sh = sh;
++    impl_reduce.launch_kernel({&rargs,
++                               &rarg_size,
++                               num_tokens * num_q_heads, // one wave per (token, head, 64-dim quarter)
++                               1,
++                               1,
++                               256,
++                               1,
++                               1,
++                               stream});
++}
+diff --git a/hsa/gfx950/mtp_verify_attn/vattn_hd256_fp8_gqa16.co b/hsa/gfx950/mtp_verify_attn/vattn_hd256_fp8_gqa16.co
+new file mode 100755
+index 0000000000000000000000000000000000000000..959aca2bedaa33b7eddbb694aeb0a4d6f97f85c7
+GIT binary patch
+literal 16128
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/hsa/gfx950/mtp_verify_attn/vattn_hd256_fp8_gqa8.co b/hsa/gfx950/mtp_verify_attn/vattn_hd256_fp8_gqa8.co
+new file mode 100755
+index 0000000000000000000000000000000000000000..604e8045f5c97c7fdba036a5ecc01087fc00c17a
+GIT binary patch
+literal 16192
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/hsa/gfx950/mtp_verify_attn/vattn_reduce.co b/hsa/gfx950/mtp_verify_attn/vattn_reduce.co
+new file mode 100755
+index 0000000000000000000000000000000000000000..815b9bfcc835c5fa2eb85e32144c49ae97d9f36a
+GIT binary patch
+literal 7720
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/op_tests/test_mtp_verify_attn_asm.py b/op_tests/test_mtp_verify_attn_asm.py
+new file mode 100644
+index 000000000..8c192eaf2
+--- /dev/null
++++ b/op_tests/test_mtp_verify_attn_asm.py
+@@ -0,0 +1,126 @@
++# SPDX-License-Identifier: MIT
++# Copyright (C) 2024-2026, Advanced Micro Devices, Inc. All rights reserved.
++#
++# Correctness + performance test for the gfx950 assembly MTP-verify attention
++# (aiter.mtp_verify_attn_fwd_asm): 4 query tokens per sequence over an NHD
++# page-16 fp8 KV cache, head_dim 256, GQA ratio 16 (TP2 shape) or 8 (TP4).
++import argparse
++import math
++
++import pandas as pd
++import torch
++
++import aiter
++from aiter import dtypes
++from aiter.jit.utils.chip_info import get_gfx
++from aiter.test_common import checkAllclose, run_perftest
++
++torch.set_default_device("cuda")
++SUPPORTED_GFX = ["gfx950"]
++QLEN, HD, PAGE = 4, 256, 16
++
++
++def make_inputs(ctx, num_seqs, num_q_heads, num_kv_heads, k_descale=1.0, v_descale=1.0, replicas=1, seed=0):
++    """Random paged KV cache with a shuffled page table (pages of one sequence
++    are scattered over the pool, as a real allocator would leave them)."""
++    torch.manual_seed(seed)
++    kvlen = ctx + QLEN
++    npages = (kvlen + PAGE - 1) // PAGE
++    perm = torch.randperm(num_seqs * npages)
++    bt = perm.to(torch.int32).view(num_seqs, npages)
++    caches = []
++    for _ in range(replicas):
++        k = (torch.randn(num_seqs * npages, PAGE, num_kv_heads, HD) / 4).to(dtypes.fp8)
++        v = (torch.randn(num_seqs * npages, PAGE, num_kv_heads, HD) / 4).to(dtypes.fp8)
++        k2, v2 = torch.empty_like(k), torch.empty_like(v)
++        k2[perm], v2[perm] = k, v
++        caches.append((k2, v2))
++    q = (torch.randn(num_seqs * QLEN, num_q_heads, HD) / 4).to(dtypes.bf16)
++    cu_q = torch.arange(0, (num_seqs + 1) * QLEN, QLEN, dtype=torch.int32)
++    seq_lens = torch.full((num_seqs,), kvlen, dtype=torch.int64)
++    kd = torch.full((1,), k_descale, dtype=torch.float32)
++    vd = torch.full((1,), v_descale, dtype=torch.float32)
++    return caches, bt, q, cu_q, seq_lens, kd, vd, kvlen
++
++
++def torch_ref(k2, v2, bt, q, seq_lens, kd, vd, num_q_heads, num_kv_heads):
++    num_seqs = bt.shape[0]
++    gqa = num_q_heads // num_kv_heads
++    outs = []
++    for s in range(num_seqs):
++        kvlen = int(seq_lens[s])
++        pages = bt[s].long()
++        kk = k2[pages].reshape(-1, num_kv_heads, HD)[:kvlen].float() * kd
++        vv = v2[pages].reshape(-1, num_kv_heads, HD)[:kvlen].float() * vd
++        qq = q[s * QLEN:(s + 1) * QLEN].float()
++        o = torch.empty(QLEN, num_q_heads, HD)
++        for t in range(QLEN):
++            L = kvlen - QLEN + t + 1  # causal: query t sees the first L keys
++            for h in range(num_q_heads):
++                kvh = h // gqa
++                sc = (qq[t, h] @ kk[:L, kvh].T) / math.sqrt(HD)
++                o[t, h] = torch.softmax(sc, dim=-1) @ vv[:L, kvh]
++        outs.append(o)
++    return torch.cat(outs).to(dtypes.bf16)
++
++
++def test_correctness(ctx, num_seqs, num_q_heads, num_kv_heads, k_descale, v_descale):
++    caches, bt, q, cu_q, seq_lens, kd, vd, kvlen = make_inputs(
++        ctx, num_seqs, num_q_heads, num_kv_heads, k_descale, v_descale)
++    k2, v2 = caches[0]
++    out = aiter.mtp_verify_attn_fwd_asm(q, k2, v2, bt, seq_lens, cu_q, kd, vd, 1.0 / math.sqrt(HD))
++    ref = torch_ref(k2, v2, bt, q, seq_lens, kd, vd, num_q_heads, num_kv_heads)
++    tag = f"ctx={ctx} seqs={num_seqs} q_heads={num_q_heads} kv_heads={num_kv_heads} kd={k_descale} vd={v_descale}"
++    # Q and P are fp8-quantized inside the kernel: error is ~0.13 of the output std.
++    checkAllclose(ref.float(), out.float(), atol=4e-3, rtol=0.2, msg=tag)
++    return (out.float() - ref.float()).abs().max().item() / ref.float().std().item()
++
++
++def test_perf(ctx, num_seqs, num_q_heads, num_kv_heads, replicas=8):
++    caches, bt, q, cu_q, seq_lens, kd, vd, kvlen = make_inputs(
++        ctx, num_seqs, num_q_heads, num_kv_heads, replicas=replicas)
++    scale = 1.0 / math.sqrt(HD)
++    num_segments = aiter.mtp_verify_attn_num_segments(num_seqs, num_kv_heads)
++    state = {"i": 0}
++
++    def run():
++        k2, v2 = caches[state["i"] % replicas]  # rotate replicas so the KV read is cold
++        state["i"] += 1
++        return aiter.mtp_verify_attn_fwd_asm(q, k2, v2, bt, seq_lens, cu_q, kd, vd, scale,
++                                             num_segments=num_segments)
++
++    _, us = run_perftest(run, num_iters=64, num_warmup=4)
++    kv_bytes = num_seqs * kvlen * num_kv_heads * HD * 2
++    return us, kv_bytes / us / 1e6, num_segments
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--perf", action="store_true", help="also run the bandwidth benchmark")
++    args = parser.parse_args()
++    if get_gfx() not in SUPPORTED_GFX:
++        print(f"skip: mtp_verify_attn asm kernel is only shipped for {SUPPORTED_GFX}, got {get_gfx()}")
++        return
++    rows = []
++    for ctx, seqs, hq, hkv, kd, vd in [
++        (1000, 2, 16, 1, 1.0, 1.0),   # TP2 shape, GQA 16
++        (1000, 2, 16, 1, 0.5, 2.0),   # per-tensor KV descales
++        (1000, 2, 8, 1, 1.0, 1.0),    # TP4 shape, GQA 8
++        (777, 2, 32, 2, 1.0, 1.0),    # 2 KV heads, ragged page count
++        (8000, 3, 16, 1, 1.0, 1.0),   # empty tail segments
++    ]:
++        err = test_correctness(ctx, seqs, hq, hkv, kd, vd)
++        rows.append(dict(ctx=ctx, seqs=seqs, q_heads=hq, kv_heads=hkv, k_descale=kd, v_descale=vd,
++                         max_err_over_std=round(err, 3)))
++    print(pd.DataFrame(rows).to_markdown(index=False))
++    if args.perf:
++        rows = []
++        for ctx, seqs, hq, hkv in [(35000, 16, 16, 1), (70000, 16, 16, 1), (35000, 16, 8, 1), (35000, 4, 16, 1)]:
++            us, tbps, segs = test_perf(ctx, seqs, hq, hkv)
++            rows.append(dict(ctx=ctx, seqs=seqs, q_heads=hq, kv_heads=hkv, segments=segs,
++                             us=round(us, 1), kv_TBps=round(tbps, 2)))
++        print(pd.DataFrame(rows).to_markdown(index=False))
++
++
++if __name__ == "__main__":
++    main()

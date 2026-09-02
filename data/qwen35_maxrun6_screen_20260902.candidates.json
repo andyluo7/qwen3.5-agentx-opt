@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "points": [
+    {
+      "name": "pr35872-pr37465-aiter5190-mtpverifyasm-c12-maxrun6-graph24-page16-900s-screen",
+      "status": "provisional",
+      "throughput_per_gpu_tokens_per_s": 33697.31802,
+      "p90_interactivity_tokens_per_s_user": 112.01359,
+      "artifact": "/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-mtpverifyasm_maxrun6_graph24_page16_recv30_candidate_maxrun6_900s_20260902T164058-0500",
+      "metadata": {
+        "concurrency": 12,
+        "max_running_requests": 6,
+        "page_size": 16,
+        "scheduler_recv_interval": 30,
+        "sglang_patch_sha256": "d797f195a7a9bbe499499c2ff031e22cb5bab158e37a2865eef330ff9d402ac3",
+        "aiter_patch_sha256": "10e66d269d043f502fd966735f66791beb40195bea01569bfa73d02eeb1c0a09",
+        "duration_seconds": 910.34956,
+        "profiled_requests": 645,
+        "warmups": 131,
+        "errors": 0,
+        "power_valid": 1
+      }
+    }
+  ]
+}

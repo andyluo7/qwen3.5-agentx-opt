@@ -1,0 +1,4 @@
+source_artifact=/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_pr2737_tp2ep1_c12_exact_maxrun6_graph24_candidate_maxrun6_900s_20260901T115042-0500
+promotion_candidates=qwen35-pr2737-c12-maxrun6-graph24-page16-scheduler30-900s-screen
+advance_from_verified_screen_to_sustained_confirmation=1
+manifest=/shared/amdgpu/home/andy_luo_3v7/qwen35_maxrun6_screen_20260901.candidates.json

@@ -11,6 +11,10 @@ image_provenance="$image.provenance.txt"
 repo="${INFERENCEX_REPO:-/shared/amdgpu/home/andy_luo_3v7/InferenceX-qwen35-875cd72}"
 hf_cache="$root/cache/hf-hub"
 aiperf_cache="$root/cache/aiperf-mmap"
+sglang_patch="${SGLANG_PATCH:-}"
+sglang_patch_sha256="${SGLANG_PATCH_SHA256:-}"
+aiter_patch="${AITER_PATCH:-}"
+aiter_patch_sha256="${AITER_PATCH_SHA256:-}"
 
 inferencex_commit=875cd72b3c1b67a4d7fde75cf5ae1e028dd95fb7
 aiperf_commit=754356e9a39acc6cc6afb242d123bb57c3fb6f75
@@ -27,8 +31,11 @@ duration="${DURATION:-120}"
 conc="${CONC:-12}"
 max_running_requests="${MAX_RUNNING_REQUESTS_OVERRIDE:-24}"
 cuda_graph_max_bs="${CUDA_GRAPH_MAX_BS_OVERRIDE:-24}"
+scheduler_recv_interval="${SCHEDULER_RECV_INTERVAL_OVERRIDE:-30}"
+page_size="${PAGE_SIZE_OVERRIDE:-16}"
 port="${PORT:-8888}"
-result_filename="${RESULT_FILENAME_OVERRIDE:-qwen35_pr2737_c12_exact_${result_name}}"
+gdn_fusion_log_layer_hits="${SGLANG_GDN_DECODE_FUSION_LOG_LAYER_HITS:-0}"
+result_filename="${RESULT_FILENAME_OVERRIDE:-qwen35_pr2737_c${conc}_exact_${result_name}}"
 aiperf_runtime_dir="/tmp/inferencex-agentic-pr2737-${SLURM_JOB_ID:-manual}-${result_name}"
 container_path=/root/.cargo/bin:/opt/venv/bin:/opt/rocm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin
 
@@ -36,16 +43,65 @@ container_path=/root/.cargo/bin:/opt/venv/bin:/opt/rocm/bin:/usr/local/sbin:/usr
   echo "unsafe result name: $result_name" >&2
   exit 2
 }
-[[ "$conc" == 12 ]] || {
-  echo "this runner is intentionally restricted to C12" >&2
-  exit 2
-}
-for value in "$duration" "$max_running_requests" "$cuda_graph_max_bs" "$port"; do
+case "$conc" in
+  1|4|6|7|8|12) ;;
+  *)
+    echo "this low-concurrency runner supports CONC=1, 4, 6, 7, 8, or 12; got $conc" >&2
+    exit 2
+    ;;
+esac
+for value in \
+  "$duration" "$max_running_requests" "$cuda_graph_max_bs" \
+  "$scheduler_recv_interval" "$page_size" "$port"; do
   [[ "$value" =~ ^[1-9][0-9]*$ ]] || {
-    echo "duration, max-running, graph size, and port must be positive integers" >&2
+    echo "duration, max-running, graph size, scheduler interval, and port must be positive integers" >&2
     exit 2
   }
 done
+case "$page_size" in
+  16|64) ;;
+  *)
+    echo "this launcher supports PAGE_SIZE_OVERRIDE=16 or 64; got $page_size" >&2
+    exit 2
+    ;;
+esac
+if [[ -n "$sglang_patch" ]]; then
+  [[ -f "$sglang_patch" ]] || {
+    echo "SGLANG_PATCH does not exist: $sglang_patch" >&2
+    exit 2
+  }
+  [[ "$sglang_patch_sha256" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "SGLANG_PATCH_SHA256 must be set to a lowercase SHA256" >&2
+    exit 2
+  }
+  actual_patch_sha256="$(sha256sum "$sglang_patch" | awk '{print $1}')"
+  [[ "$actual_patch_sha256" == "$sglang_patch_sha256" ]] || {
+    echo "SGLANG patch checksum mismatch: expected $sglang_patch_sha256 got $actual_patch_sha256" >&2
+    exit 2
+  }
+fi
+if [[ -n "$aiter_patch" ]]; then
+  [[ -f "$aiter_patch" ]] || {
+    echo "AITER_PATCH does not exist: $aiter_patch" >&2
+    exit 2
+  }
+  [[ "$aiter_patch_sha256" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "AITER_PATCH_SHA256 must be set to a lowercase SHA256" >&2
+    exit 2
+  }
+  actual_aiter_patch_sha256="$(sha256sum "$aiter_patch" | awk '{print $1}')"
+  [[ "$actual_aiter_patch_sha256" == "$aiter_patch_sha256" ]] || {
+    echo "AITER patch checksum mismatch: expected $aiter_patch_sha256 got $actual_aiter_patch_sha256" >&2
+    exit 2
+  }
+elif [[ -n "$aiter_patch_sha256" ]]; then
+  echo "AITER_PATCH_SHA256 was set without AITER_PATCH" >&2
+  exit 2
+fi
+[[ "$gdn_fusion_log_layer_hits" == 0 || "$gdn_fusion_log_layer_hits" == 1 ]] || {
+  echo "SGLANG_GDN_DECODE_FUSION_LOG_LAYER_HITS must be 0 or 1" >&2
+  exit 2
+}
 
 for required in \
   "$image" \
@@ -64,7 +120,9 @@ srun --jobid="$job_id" --overlap --account=r7n --nodes=1 --ntasks=1 \
   "$result_dir" "$image" "$image_provenance" "$model_host_path" \
   "$repo" "$inferencex_commit" "$recipe_fingerprint" \
   "$aiperf_commit" "$sglang_commit" "$aiter_commit" \
-  "$duration" "$conc" "$max_running_requests" "$cuda_graph_max_bs" <<'PREP'
+  "$duration" "$conc" "$max_running_requests" "$cuda_graph_max_bs" \
+  "$sglang_patch_sha256" "$gdn_fusion_log_layer_hits" \
+  "$scheduler_recv_interval" "$page_size" "$aiter_patch_sha256" <<'PREP'
 set -euo pipefail
 result_dir="$1"
 image="$2"
@@ -80,6 +138,11 @@ duration="${11}"
 conc="${12}"
 max_running_requests="${13}"
 cuda_graph_max_bs="${14}"
+sglang_patch_sha256="${15}"
+gdn_fusion_log_layer_hits="${16}"
+scheduler_recv_interval="${17}"
+page_size="${18}"
+aiter_patch_sha256="${19}"
 mkdir -p "$result_dir"
 test "$(<"$repo/INFERENCEX_COMMIT.txt")" = "$inferencex_commit"
 test "$(<"$repo/AIPERF_COMMIT.txt")" = "$aiperf_commit"
@@ -88,11 +151,28 @@ cp "$image_provenance" "$result_dir/image.provenance.txt"
 cp "$repo/benchmarks/single_node/agentic/qwen3.5_fp4_mi355x_sglang_mtp.sh" \
   "$result_dir/official_recipe_with_env_override.sh"
 cp "$repo/benchmarks/benchmark_lib.sh" "$result_dir/benchmark_lib.sh"
+overlay_root="$result_dir/recipe_overlay"
+overlay_recipe="$overlay_root/benchmarks/single_node/agentic/qwen3.5_fp4_mi355x_sglang_mtp.sh"
+mkdir -p "$(dirname "$overlay_recipe")"
+cp "$repo/benchmarks/benchmark_lib.sh" "$overlay_root/benchmarks/benchmark_lib.sh"
+original_page_size_count="$(grep -Ec '^[[:space:]]*--page-size 16$' \
+  "$repo/benchmarks/single_node/agentic/qwen3.5_fp4_mi355x_sglang_mtp.sh")"
+[[ "$original_page_size_count" == 1 ]] || {
+  echo "expected exactly one --page-size 16 line in the pinned recipe; got $original_page_size_count" >&2
+  exit 2
+}
+sed "s/--page-size 16/--page-size $page_size/" \
+  "$repo/benchmarks/single_node/agentic/qwen3.5_fp4_mi355x_sglang_mtp.sh" \
+  >"$overlay_recipe"
+chmod +x "$overlay_recipe"
+grep -Eq "^[[:space:]]*--page-size ${page_size}$" "$overlay_recipe"
 sha256sum "$image" > "$result_dir/image.sha256"
 sha256sum "$model_host_path/config.json" > "$result_dir/model_config.sha256"
 sha256sum \
   "$repo/benchmarks/single_node/agentic/qwen3.5_fp4_mi355x_sglang_mtp.sh" \
-  "$repo/benchmarks/benchmark_lib.sh" > "$result_dir/source_files.sha256"
+  "$repo/benchmarks/benchmark_lib.sh" \
+  "$overlay_recipe" \
+  "$overlay_root/benchmarks/benchmark_lib.sh" > "$result_dir/source_files.sha256"
 {
   printf 'inferencex_commit=%s\n' "$inferencex_commit"
   printf 'aiperf_commit=%s\n' "$aiperf_commit"
@@ -103,10 +183,21 @@ sha256sum \
   printf 'concurrency=%s\n' "$conc"
   printf 'max_running_requests=%s\n' "$max_running_requests"
   printf 'cuda_graph_max_bs=%s\n' "$cuda_graph_max_bs"
+  printf 'scheduler_recv_interval=%s\n' "$scheduler_recv_interval"
+  printf 'page_size=%s\n' "$page_size"
+  printf 'sglang_patch_sha256=%s\n' "${sglang_patch_sha256:-none}"
+  printf 'aiter_patch_sha256=%s\n' "${aiter_patch_sha256:-none}"
+  printf 'sglang_gdn_decode_fusion_log_layer_hits=%s\n' "$gdn_fusion_log_layer_hits"
 } > "$result_dir/run_identity.txt"
 PREP
 
 container_mounts="$repo:/workspace,$hf_cache:/mnt/hf_hub_cache,$aiperf_cache:/aiperf_mmap_cache,$result_dir:/results"
+if [[ -n "$sglang_patch" ]]; then
+  container_mounts="$container_mounts,$sglang_patch:/sglang_patch.diff:ro"
+fi
+if [[ -n "$aiter_patch" ]]; then
+  container_mounts="$container_mounts,$aiter_patch:/aiter_patch.diff:ro"
+fi
 
 srun --jobid="$job_id" --overlap --account=r7n --nodes=1 --ntasks=1 \
   --nodelist="$target_node" --gpus=2 --cpus-per-task=128 \
@@ -118,6 +209,26 @@ srun --jobid="$job_id" --overlap --account=r7n --nodes=1 --ntasks=1 \
   --no-container-entrypoint \
   --export=ALL,AIPERF_DATASET_MMAP_CACHE_DIR=/aiperf_mmap_cache \
   bash -o pipefail -c "
+    if [[ -n '$aiter_patch_sha256' ]]; then
+      actual_aiter_patch_sha256=\$(sha256sum /aiter_patch.diff | awk '{print \$1}')
+      test \"\$actual_aiter_patch_sha256\" = '$aiter_patch_sha256'
+      git -C /sgl-workspace/aiter apply --check /aiter_patch.diff
+      git -C /sgl-workspace/aiter apply /aiter_patch.diff
+      git -C /sgl-workspace/aiter diff --check
+      cp /aiter_patch.diff /results/aiter_source.patch
+      git -C /sgl-workspace/aiter diff --binary > /results/aiter_worktree.patch
+      test -s /results/aiter_worktree.patch
+    fi
+    if [[ -n '$sglang_patch_sha256' ]]; then
+      actual_patch_sha256=\$(sha256sum /sglang_patch.diff | awk '{print \$1}')
+      test \"\$actual_patch_sha256\" = '$sglang_patch_sha256'
+      git -C /sgl-workspace/sglang apply --check /sglang_patch.diff
+      git -C /sgl-workspace/sglang apply /sglang_patch.diff
+      git -C /sgl-workspace/sglang diff --check
+      cp /sglang_patch.diff /results/sglang_source.patch
+      git -C /sgl-workspace/sglang diff --binary > /results/sglang_worktree.patch
+      test -s /results/sglang_worktree.patch
+    fi
     env PATH=$container_path LD_LIBRARY_PATH=/opt/rocm/lib \
       bash -c '
         set -e
@@ -164,6 +275,9 @@ srun --jobid="$job_id" --overlap --account=r7n --nodes=1 --ntasks=1 \
       SGLANG_SET_CPU_AFFINITY=1 \
       SGLANG_USE_AITER=1 \
       SGLANG_USE_ROCM700A=1 \
+      SGLANG_ENABLE_GDN_DECODE_FUSED_PROJ_CONV=1 \
+      SGLANG_GDN_DECODE_FUSION_LOG_LAYER_HITS=$gdn_fusion_log_layer_hits \
+      SCHEDULER_RECV_INTERVAL=$scheduler_recv_interval \
       NCCL_MIN_NCHANNELS=112 \
       ROCM_QUICK_REDUCE_QUANTIZATION=INT8 \
       TORCHINDUCTOR_MAX_AUTOTUNE=1 \
@@ -208,6 +322,6 @@ srun --jobid="$job_id" --overlap --account=r7n --nodes=1 --ntasks=1 \
       PYTHONPYCACHEPREFIX=/tmp/inferencex-pycache-pr2737-${SLURM_JOB_ID:-manual} \
       MAX_RUNNING_REQUESTS_OVERRIDE=$max_running_requests \
       CUDA_GRAPH_MAX_BS_OVERRIDE=$cuda_graph_max_bs \
-      bash benchmarks/single_node/agentic/qwen3.5_fp4_mi355x_sglang_mtp.sh \
+      bash /results/recipe_overlay/benchmarks/single_node/agentic/qwen3.5_fp4_mi355x_sglang_mtp.sh \
       2>&1 | tee /results/driver.log
   "

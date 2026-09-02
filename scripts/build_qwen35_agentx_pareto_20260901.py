@@ -18,7 +18,7 @@ from typing import Iterable
 
 CURRENT_RUN = "InferenceX 33298482346 attempt 1"
 B200_RUN = "InferenceX 30758866378 attempt 1"
-OPTIMIZED_RUN = "Accepted MI355X sustained optimization"
+OPTIMIZED_RUN = "Accepted MI355X sustained optimization through 2026-09-02"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CURRENT_DIR = REPO_ROOT / "data/current_mi355x_33298482346_attempt1"
@@ -26,7 +26,7 @@ DEFAULT_B200_DIR = REPO_ROOT / "data/b200_30758866378_attempt1"
 DEFAULT_OUTPUT_STEM = (
     REPO_ROOT
     / "artifacts/reproduced"
-    / "Qwen3.5_AgentX_Pareto_MI355X_Optimized_vs_Current_vs_B200_2026-09-01"
+    / "Qwen3.5_AgentX_Pareto_MI355X_Optimized_vs_Current_vs_B200_2026-09-02"
 )
 
 
@@ -44,12 +44,18 @@ class Point:
     duration_seconds: float
     successful_requests: int
     artifact_source: str
+    max_running_requests: int | None = None
     frontier: bool = False
 
     @property
     def label(self) -> str:
         kv = "resident" if self.kv_offloading == "none" else "HiCache"
-        return f"TP{self.tp}/EP{self.ep} C{self.concurrency} {kv}"
+        admission = (
+            f" MRR{self.max_running_requests}"
+            if self.max_running_requests is not None
+            else ""
+        )
+        return f"TP{self.tp}/EP{self.ep} C{self.concurrency}{admission} {kv}"
 
 
 def parse_aggregate(path: Path, series: str, source_run: str) -> Point | None:
@@ -72,6 +78,7 @@ def parse_aggregate(path: Path, series: str, source_run: str) -> Point | None:
             duration_seconds=float(throughput["duration_seconds"]),
             successful_requests=int(data["num_requests_successful"]),
             artifact_source=str(path),
+            max_running_requests=None,
         )
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         return None
@@ -93,11 +100,68 @@ def optimized_points() -> list[Point]:
 
     root = "/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results"
     rows = [
-        # tp, ep, C, kv, interactivity, throughput, duration, requests, artifact
+        # tp, ep, C, maxrun, kv, interactivity, throughput, duration, requests, artifact
+        (
+            2,
+            1,
+            4,
+            1,
+            "none",
+            285.02586,
+            9713.45409,
+            3609.00553,
+            755,
+            "qwen35_pr2737_tp2ep1_c4_pr35872-pr37465-aiter5190-"
+            "mtpverifyasm-c4_maxrun1_graph24_page16_3600s_confirm_"
+            "20260902T000958-0500",
+        ),
         (
             2,
             1,
             12,
+            1,
+            "none",
+            283.26609,
+            14318.01948,
+            3629.47229,
+            1053,
+            "qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-"
+            "mtpverifyasm_maxrun1_graph24_page16_3600s_confirm_"
+            "20260901T192658-0500",
+        ),
+        (
+            2,
+            1,
+            8,
+            1,
+            "none",
+            289.66929,
+            14542.23218,
+            3619.63816,
+            1127,
+            "qwen35_pr2737_tp2ep1_c8_pr35872-pr37465-aiter5190-"
+            "mtpverifyasm-c8_maxrun1_graph24_page16_3600s_confirm_"
+            "20260902T022509-0500",
+        ),
+        (
+            2,
+            1,
+            12,
+            2,
+            "none",
+            212.24655,
+            21921.58888,
+            3626.76033,
+            1552,
+            "qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-"
+            "mtpverifyasm_maxrun2_graph24_page16_3600s_confirm_"
+            "20260901T194843-0500",
+        ),
+        (
+            2,
+            1,
+            12,
+            4,
             "none",
             147.60291,
             26579.15484,
@@ -108,8 +172,23 @@ def optimized_points() -> list[Point]:
         ),
         (
             2,
+            1,
+            12,
+            6,
+            "none",
+            126.37218,
+            30453.91358,
+            3622.06436,
+            2206,
+            "qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-"
+            "mtpverifyasm-maxrun6_maxrun6_graph24_page16_3600s_confirm_"
+            "20260902T172507-0500",
+        ),
+        (
+            2,
             2,
             16,
+            12,
             "dram",
             82.85874,
             36905.27889,
@@ -123,6 +202,7 @@ def optimized_points() -> list[Point]:
             2,
             2,
             18,
+            12,
             "dram",
             81.37383,
             40365.06972,
@@ -136,6 +216,7 @@ def optimized_points() -> list[Point]:
             2,
             2,
             20,
+            12,
             "dram",
             86.64070,
             43292.13539,
@@ -149,6 +230,7 @@ def optimized_points() -> list[Point]:
             2,
             2,
             22,
+            12,
             "dram",
             81.13203,
             43632.97300,
@@ -162,6 +244,7 @@ def optimized_points() -> list[Point]:
             2,
             2,
             24,
+            12,
             "dram",
             79.67836,
             42678.42266,
@@ -175,6 +258,7 @@ def optimized_points() -> list[Point]:
             2,
             2,
             28,
+            12,
             "dram",
             76.26678,
             45559.25747,
@@ -188,6 +272,7 @@ def optimized_points() -> list[Point]:
             2,
             2,
             32,
+            12,
             "dram",
             78.78076,
             46811.57575,
@@ -212,11 +297,13 @@ def optimized_points() -> list[Point]:
             duration_seconds=duration,
             successful_requests=requests,
             artifact_source=f"{root}/{artifact}",
+            max_running_requests=maxrun,
         )
         for (
             tp,
             ep,
             concurrency,
+            maxrun,
             kv,
             interactivity,
             throughput,
@@ -270,6 +357,7 @@ def write_csv(path: Path, groups: list[list[Point]]) -> None:
         "tp",
         "ep",
         "concurrency",
+        "max_running_requests",
         "kv_offloading",
         "p90_interactivity_tokens_per_s_user",
         "throughput_per_gpu_tokens_per_s",
@@ -294,6 +382,11 @@ def write_csv(path: Path, groups: list[list[Point]]) -> None:
                         "tp": point.tp,
                         "ep": point.ep,
                         "concurrency": point.concurrency,
+                        "max_running_requests": (
+                            point.max_running_requests
+                            if point.max_running_requests is not None
+                            else ""
+                        ),
                         "kv_offloading": point.kv_offloading,
                         "p90_interactivity_tokens_per_s_user": (
                             f"{point.p90_interactivity:.5f}"
@@ -358,7 +451,11 @@ def plot_chart(
             **style,
         )
 
-    tuned_sources = {point.artifact_source for point in best_known if point.point_origin == "accepted optimized result"}
+    tuned_sources = {
+        point.artifact_source
+        for point in best_known
+        if point.point_origin.startswith("accepted ")
+    }
     tuned_frontier = [
         point for point in best_frontier if point.artifact_source in tuned_sources
     ]
@@ -374,36 +471,50 @@ def plot_chart(
         label="Accepted optimized points on best-known frontier",
     )
 
-    new_c12 = next(
+    admission_frontier = [
         point
         for point in tuned_frontier
-        if point.tp == 2 and point.ep == 1 and point.concurrency == 12
-    )
-    axis.scatter(
-        [new_c12.p90_interactivity],
-        [new_c12.throughput_per_gpu],
-        marker="*",
-        s=290,
-        color="#ffb000",
-        edgecolor="#8c4f00",
-        linewidth=1.0,
-        zorder=7,
-        label="New sustained optimized C12",
-    )
-    axis.annotate(
-        "New C12: 147.60 interactivity\n26,579 tok/s/GPU",
-        (new_c12.p90_interactivity, new_c12.throughput_per_gpu),
-        xytext=(28, 34),
-        textcoords="offset points",
-        fontsize=9.5,
-        fontweight="bold",
-        color="#8c4f00",
-        bbox=dict(boxstyle="round,pad=0.35", facecolor="#fff4ce", edgecolor="#d9a400"),
-        arrowprops=dict(arrowstyle="->", color="#8c4f00", linewidth=1.2),
-    )
+        if point.tp == 2
+        and point.ep == 1
+        and point.concurrency == 12
+        and point.max_running_requests is not None
+    ]
+    if admission_frontier:
+        axis.scatter(
+            [point.p90_interactivity for point in admission_frontier],
+            [point.throughput_per_gpu for point in admission_frontier],
+            marker="*",
+            s=225,
+            color="#ffb000",
+            edgecolor="#8c4f00",
+            linewidth=1.0,
+            zorder=7,
+            label="Sustained C12 admission-cap points",
+        )
+        offsets = {
+            1: (10, 13),
+            2: (10, 9),
+            3: (10, 7),
+            4: (12, 12),
+            5: (10, -22),
+            6: (-12, -24),
+        }
+        for point in admission_frontier:
+            maxrun = point.max_running_requests
+            axis.annotate(
+                f"MRR{maxrun}: {point.p90_interactivity:.1f}\n"
+                f"{point.throughput_per_gpu:,.0f} tok/s/GPU",
+                (point.p90_interactivity, point.throughput_per_gpu),
+                xytext=offsets.get(maxrun, (10, 8)),
+                textcoords="offset points",
+                fontsize=8.3,
+                fontweight="semibold",
+                color="#8c4f00",
+                ha="right" if maxrun == 6 else "left",
+            )
 
     for point in tuned_frontier:
-        if point is new_c12:
+        if point in admission_frontier:
             continue
         label_offset = (10, -14) if point.concurrency == 20 else (6, 7)
         axis.annotate(
@@ -445,7 +556,8 @@ def plot_chart(
     axis.set_axisbelow(True)
     for spine in axis.spines.values():
         spine.set_color("#b8bec5")
-    axis.legend(loc="lower right", frameon=True, framealpha=0.96, fontsize=9.2)
+    # Keep the low-throughput/rightmost region clear for C4/C8 frontier points.
+    axis.legend(loc="upper right", frameon=True, framealpha=0.96, fontsize=9.2)
     axis.text(
         0.01,
         0.012,

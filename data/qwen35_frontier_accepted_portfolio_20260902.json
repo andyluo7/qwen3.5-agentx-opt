@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "points": [
+    {
+      "name": "pr35872-pr37465-aiter5190-mtpverifyasm-c12-maxrun1-3600s-confirm",
+      "status": "accepted",
+      "throughput_per_gpu_tokens_per_s": 14318.01948,
+      "p90_interactivity_tokens_per_s_user": 283.26609,
+      "artifact": "/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-mtpverifyasm_maxrun1_graph24_page16_3600s_confirm_20260901T192658-0500",
+      "metadata": {
+        "evidence_stage": "accepted_after_sustained_confirmation_and_postflight",
+        "concurrency": 12,
+        "max_running_requests": 1,
+        "cuda_graph_max_bs": 24,
+        "scheduler_recv_interval": 30,
+        "page_size": 16,
+        "duration_seconds": 3600,
+        "profiled_requests": 1053,
+        "avg_power_w": 626.851,
+        "sglang_patch_sha256": "d797f195a7a9bbe499499c2ff031e22cb5bab158e37a2865eef330ff9d402ac3",
+        "aiter_patch_sha256": "10e66d269d043f502fd966735f66791beb40195bea01569bfa73d02eeb1c0a09",
+        "qualification_name": "pr35872-pr37465-aiter5190-mtpverifyasm-c12-maxrun1-900s-screen",
+        "qualification_manifest": "/shared/amdgpu/home/andy_luo_3v7/qwen35-pr2737-c12-pr35872-pr37465-aiter5190-mtpverifyasm-maxrun1-900s-aba-20260901T173211-0500.candidates.json",
+        "qualification_decision": "/shared/amdgpu/home/andy_luo_3v7/qwen35-pr2737-c12-pr35872-pr37465-aiter5190-mtpverifyasm-maxrun1-900s-aba-20260901T173211-0500.decision.txt",
+        "postflight_artifact": "/shared/amdgpu/home/andy_luo_3v7/qwen35-frontier-postflight-2573.txt",
+        "confirmation_decision": "/shared/amdgpu/home/andy_luo_3v7/qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-mtpverifyasm_maxrun1_graph24_page16_3600s_confirm_20260901T192658-0500.decision.txt"
+      }
+    },
+    {
+      "name": "pr35872-pr37465-aiter5190-mtpverifyasm-c12-maxrun2-3600s-confirm",
+      "status": "accepted",
+      "throughput_per_gpu_tokens_per_s": 21921.58888,
+      "p90_interactivity_tokens_per_s_user": 212.24655,
+      "artifact": "/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-mtpverifyasm_maxrun2_graph24_page16_3600s_confirm_20260901T194843-0500",
+      "metadata": {
+        "evidence_stage": "accepted_after_sustained_confirmation_and_postflight",
+        "concurrency": 12,
+        "max_running_requests": 2,
+        "cuda_graph_max_bs": 24,
+        "scheduler_recv_interval": 30,
+        "page_size": 16,
+        "duration_seconds": 3600,
+        "profiled_requests": 1552,
+        "avg_power_w": 667.9,
+        "sglang_patch_sha256": "d797f195a7a9bbe499499c2ff031e22cb5bab158e37a2865eef330ff9d402ac3",
+        "aiter_patch_sha256": "10e66d269d043f502fd966735f66791beb40195bea01569bfa73d02eeb1c0a09",
+        "qualification_name": "pr35872-pr37465-aiter5190-mtpverifyasm-c12-maxrun2-900s-screen",
+        "qualification_manifest": "/shared/amdgpu/home/andy_luo_3v7/qwen35-pr2737-c12-pr35872-pr37465-aiter5190-mtpverifyasm-maxrun2-900s-aba-20260901T182013-0500.candidates.json",
+        "qualification_decision": "/shared/amdgpu/home/andy_luo_3v7/qwen35-pr2737-c12-pr35872-pr37465-aiter5190-mtpverifyasm-maxrun2-900s-aba-20260901T182013-0500.decision.txt",
+        "postflight_artifact": "/shared/amdgpu/home/andy_luo_3v7/qwen35-frontier-postflight-2579.txt",
+        "confirmation_decision": "/shared/amdgpu/home/andy_luo_3v7/qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-mtpverifyasm_maxrun2_graph24_page16_3600s_confirm_20260901T194843-0500.decision.txt"
+      }
+    },
+    {
+      "name": "pr35872-pr37465-aiter5190-mtpverifyasm-c4-c4-maxrun1-3600s-confirm",
+      "status": "accepted",
+      "throughput_per_gpu_tokens_per_s": 9713.45409,
+      "p90_interactivity_tokens_per_s_user": 285.02586,
+      "artifact": "/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_pr2737_tp2ep1_c4_pr35872-pr37465-aiter5190-mtpverifyasm-c4_maxrun1_graph24_page16_3600s_confirm_20260902T000958-0500",
+      "metadata": {
+        "evidence_stage": "accepted_after_sustained_confirmation_and_postflight",
+        "concurrency": 4,
+        "max_running_requests": 1,
+        "cuda_graph_max_bs": 24,
+        "scheduler_recv_interval": 30,
+        "page_size": 16,
+        "duration_seconds": 3600,
+        "profiled_requests": 755,
+        "avg_power_w": 543.631,
+        "sglang_patch_sha256": "d797f195a7a9bbe499499c2ff031e22cb5bab158e37a2865eef330ff9d402ac3",
+        "aiter_patch_sha256": "10e66d269d043f502fd966735f66791beb40195bea01569bfa73d02eeb1c0a09",
+        "qualification_name": "pr35872-pr37465-aiter5190-mtpverifyasm-c4-maxrun1-900s-screen",
+        "qualification_manifest": "/shared/amdgpu/home/andy_luo_3v7/qwen35-pr2737-c4-pr35872-pr37465-aiter5190-mtpverifyasm-maxrun1-900s-aba-20260901T214540-0500.candidates.json",
+        "qualification_decision": "/shared/amdgpu/home/andy_luo_3v7/qwen35-pr2737-c4-pr35872-pr37465-aiter5190-mtpverifyasm-maxrun1-900s-aba-20260901T214540-0500.decision.txt",
+        "postflight_artifact": "/shared/amdgpu/home/andy_luo_3v7/qwen35-frontier-postflight-2620.txt",
+        "confirmation_decision": "/shared/amdgpu/home/andy_luo_3v7/qwen35_pr2737_tp2ep1_c4_pr35872-pr37465-aiter5190-mtpverifyasm-c4_maxrun1_graph24_page16_3600s_confirm_20260902T000958-0500.decision.txt"
+      }
+    },
+    {
+      "name": "pr35872-pr37465-aiter5190-mtpverifyasm-c8-c8-maxrun1-3600s-confirm",
+      "status": "accepted",
+      "throughput_per_gpu_tokens_per_s": 14542.23218,
+      "p90_interactivity_tokens_per_s_user": 289.66929,
+      "artifact": "/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_pr2737_tp2ep1_c8_pr35872-pr37465-aiter5190-mtpverifyasm-c8_maxrun1_graph24_page16_3600s_confirm_20260902T022509-0500",
+      "metadata": {
+        "evidence_stage": "accepted_after_sustained_confirmation_and_postflight",
+        "concurrency": 8,
+        "max_running_requests": 1,
+        "cuda_graph_max_bs": 24,
+        "scheduler_recv_interval": 30,
+        "page_size": 16,
+        "duration_seconds": 3600,
+        "profiled_requests": 1127,
+        "avg_power_w": 621.192,
+        "sglang_patch_sha256": "d797f195a7a9bbe499499c2ff031e22cb5bab158e37a2865eef330ff9d402ac3",
+        "aiter_patch_sha256": "10e66d269d043f502fd966735f66791beb40195bea01569bfa73d02eeb1c0a09",
+        "qualification_name": "pr35872-pr37465-aiter5190-mtpverifyasm-c8-maxrun1-graph24-page16-900s-screen",
+        "qualification_manifest": "/shared/amdgpu/home/andy_luo_3v7/qwen35-pr2737-client-concurrency-maxrun1-900s-20260902T011836-0500.candidates.json",
+        "qualification_decision": "/shared/amdgpu/home/andy_luo_3v7/qwen35-pr2737-client-concurrency-maxrun1-900s-20260902T011836-0500.decision.txt",
+        "postflight_artifact": "/shared/amdgpu/home/andy_luo_3v7/qwen35-frontier-postflight-2625.txt",
+        "confirmation_decision": "/shared/amdgpu/home/andy_luo_3v7/qwen35_pr2737_tp2ep1_c8_pr35872-pr37465-aiter5190-mtpverifyasm-c8_maxrun1_graph24_page16_3600s_confirm_20260902T022509-0500.decision.txt"
+      }
+    },
+    {
+      "name": "pr35872-pr37465-aiter5190-mtpverifyasm-maxrun6-c12-maxrun6-3600s-confirm",
+      "status": "accepted",
+      "throughput_per_gpu_tokens_per_s": 30453.91358,
+      "p90_interactivity_tokens_per_s_user": 126.37218,
+      "artifact": "/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-mtpverifyasm-maxrun6_maxrun6_graph24_page16_3600s_confirm_20260902T172507-0500",
+      "metadata": {
+        "evidence_stage": "accepted_after_sustained_confirmation_and_postflight",
+        "concurrency": 12,
+        "max_running_requests": 6,
+        "cuda_graph_max_bs": 24,
+        "scheduler_recv_interval": 30,
+        "page_size": 16,
+        "duration_seconds": 3600,
+        "profiled_requests": 2206,
+        "avg_power_w": 697.084,
+        "sglang_patch_sha256": "d797f195a7a9bbe499499c2ff031e22cb5bab158e37a2865eef330ff9d402ac3",
+        "aiter_patch_sha256": "10e66d269d043f502fd966735f66791beb40195bea01569bfa73d02eeb1c0a09",
+        "qualification_name": "pr35872-pr37465-aiter5190-mtpverifyasm-c12-maxrun6-graph24-page16-900s-screen",
+        "qualification_manifest": "/shared/amdgpu/home/andy_luo_3v7/qwen35-combined-qualification-2676-c12.candidates.json",
+        "qualification_decision": "/shared/amdgpu/home/andy_luo_3v7/qwen35-combined-qualification-2676-c12.decision.txt",
+        "postflight_artifact": "/shared/amdgpu/home/andy_luo_3v7/qwen35-frontier-postflight-2679.txt",
+        "confirmation_decision": "/shared/amdgpu/home/andy_luo_3v7/qwen35_pr2737_tp2ep1_c12_pr35872-pr37465-aiter5190-mtpverifyasm-maxrun6_maxrun6_graph24_page16_3600s_confirm_20260902T172507-0500.decision.txt"
+      }
+    }
+  ]
+}

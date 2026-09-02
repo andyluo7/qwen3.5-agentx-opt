@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "points": [
+    {
+      "name": "pr35872-pr37465-aiter5190-mtpverifyasm-c6-maxrun1-graph24-page16-900s-screen",
+      "status": "provisional",
+      "throughput_per_gpu_tokens_per_s": 11890.11297,
+      "p90_interactivity_tokens_per_s_user": 295.26617,
+      "artifact": "/shared/data/R7N/andy_luo_3v7/qwen35-agentx-results/qwen35_pr2737_tp2ep1_c6_pr35872-pr37465-aiter5190-mtpverifyasm-c6c7_maxrun1_graph24_page16_recv30_candidate_c6_900s_20260902T061113-0500",
+      "metadata": {
+        "evidence_stage": "verified_900s_qualification_screen",
+        "concurrency": 6,
+        "max_running_requests": 1,
+        "cuda_graph_max_bs": 24,
+        "scheduler_recv_interval": 30,
+        "page_size": 16,
+        "duration_seconds": 918.97832,
+        "profiled_requests": 277,
+        "warmup_requests": 65,
+        "error_requests": 0,
+        "avg_power_w": 569.413,
+        "sglang_commit": "cdbfe90b4a6c728e03e6520862d792501b3a97bb",
+        "aiter_commit": "c16d44b93a528b2a4bfd6d8d3409116d465872a9",
+        "sglang_patch_sha256": "d797f195a7a9bbe499499c2ff031e22cb5bab158e37a2865eef330ff9d402ac3",
+        "aiter_patch_sha256": "10e66d269d043f502fd966735f66791beb40195bea01569bfa73d02eeb1c0a09",
+        "raw_p90_recomputed": true,
+        "power_valid": true,
+        "artifact_checksums_valid": true,
+        "required_routes_observed": true,
+        "teardown_clean": true
+      }
+    }
+  ]
+}
